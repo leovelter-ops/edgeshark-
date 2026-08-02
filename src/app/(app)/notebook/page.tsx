@@ -72,6 +72,7 @@ export default function NotebookPage() {
   const [search, setSearch] = useState("");
   const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [newNoteMenu, setNewNoteMenu] = useState(false);
+  const [pinnedOpen, setPinnedOpen] = useState(true);
   const [recentOpen, setRecentOpen] = useState(false);
   const [allOpen, setAllOpen] = useState(true);
   const [panelOpen, setPanelOpen] = useState(true);
@@ -202,6 +203,10 @@ export default function NotebookPage() {
     .filter(match)
     .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
     .slice(0, 5);
+  const pinned = [...notes]
+    .filter(match)
+    .filter((n) => n.is_pinned)
+    .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
 
   const activeTemplate =
     view.kind === "template"
@@ -268,6 +273,31 @@ export default function NotebookPage() {
               <ChevronsLeft size={16} />
             </button>
           </div>
+
+          {/* Pinned notes (only when something is pinned) */}
+          {pinned.length > 0 && (
+            <div className="mb-2">
+              <SectionHeader
+                label="PINNED NOTES"
+                icon={Pin}
+                count={pinned.length}
+                open={pinnedOpen}
+                onToggle={() => setPinnedOpen((o) => !o)}
+              />
+              {pinnedOpen && (
+                <div className="space-y-1">
+                  {pinned.map((n) => (
+                    <NoteRow
+                      key={n.id}
+                      note={n}
+                      active={view.kind === "note" && view.id === n.id}
+                      onClick={() => setView({ kind: "note", id: n.id })}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Recent notes */}
           <SectionHeader
@@ -387,6 +417,10 @@ export default function NotebookPage() {
             <TemplateBrowser
               myTemplates={myTemplates}
               onOpen={(id) => setView({ kind: "template", id })}
+              onUse={(id) => {
+                const t = [...myTemplates, ...TEMPLATES].find((x) => x.id === id);
+                if (t) createNote(t.name, t.body);
+              }}
             />
           )}
         </div>
@@ -407,11 +441,13 @@ export default function NotebookPage() {
 
 function SectionHeader({
   label,
+  icon: Icon,
   count,
   open,
   onToggle,
 }: {
   label: string;
+  icon?: React.ElementType;
   count?: number;
   open: boolean;
   onToggle: () => void;
@@ -419,6 +455,7 @@ function SectionHeader({
   return (
     <div className="mb-2 flex items-center justify-between">
       <div className="flex items-center gap-2 text-sm font-semibold text-gray-500">
+        {Icon && <Icon size={14} className="text-gray-400" />}
         {label}
         {count !== undefined && <span className="text-gray-400">{count}</span>}
       </div>
@@ -462,26 +499,46 @@ function NoteRow({
 function TemplateBrowser({
   myTemplates,
   onOpen,
+  onUse,
 }: {
   myTemplates: TemplateDef[];
   onOpen: (id: string) => void;
+  onUse: (id: string) => void;
 }) {
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const isOpen = (k: string) => !collapsed[k];
+  const toggle = (k: string) => setCollapsed((c) => ({ ...c, [k]: !c[k] }));
+
+  const chevron = (k: string) => (
+    <button onClick={() => toggle(k)} className="text-gray-400 hover:text-gray-600">
+      {isOpen(k) ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
+    </button>
+  );
+  const grid = "grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4";
+
   return (
     <div className="rounded-2xl border border-black/5 bg-white p-6 shadow-sm">
       <h2 className="mb-5 text-2xl font-bold text-gray-900">Templates</h2>
 
+      {/* Pinned Templates */}
       <div className="mb-4 flex items-center gap-2 text-lg font-semibold text-gray-800">
+        {chevron("pinned")}
         <Pin size={15} /> Pinned Templates <span className="text-sm font-normal text-gray-400">0</span>
       </div>
 
+      {/* My Templates */}
       <div className="mb-8">
         <div className="mb-3 flex items-center gap-2 text-lg font-semibold text-gray-800">
+          {chevron("mine")}
           My Templates <span className="text-sm font-normal text-gray-400">{myTemplates.length}</span>
+          <button className="rounded p-0.5 text-gray-400 hover:bg-gray-100 hover:text-brand">
+            <Plus size={16} />
+          </button>
         </div>
-        {myTemplates.length > 0 && (
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+        {isOpen("mine") && myTemplates.length > 0 && (
+          <div className={grid}>
             {myTemplates.map((t) => (
-              <TemplateCard key={t.id} template={t} onOpen={() => onOpen(t.id)} />
+              <TemplateCard key={t.id} template={t} onOpen={() => onOpen(t.id)} onUse={() => onUse(t.id)} />
             ))}
           </div>
         )}
@@ -492,14 +549,17 @@ function TemplateBrowser({
         return (
           <div key={name} className="mb-8">
             <div className="mb-3 flex items-center gap-2 text-lg font-semibold text-gray-800">
+              {chevron(name)}
               <span>{emoji}</span> {name}{" "}
               <span className="text-sm font-normal text-gray-400">{items.length}</span>
             </div>
-            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-              {items.map((t) => (
-                <TemplateCard key={t.id} template={t} onOpen={() => onOpen(t.id)} />
-              ))}
-            </div>
+            {isOpen(name) && (
+              <div className={grid}>
+                {items.map((t) => (
+                  <TemplateCard key={t.id} template={t} onOpen={() => onOpen(t.id)} onUse={() => onUse(t.id)} />
+                ))}
+              </div>
+            )}
           </div>
         );
       })}
@@ -507,18 +567,60 @@ function TemplateBrowser({
   );
 }
 
-function TemplateCard({ template, onOpen }: { template: TemplateDef; onOpen: () => void }) {
+function TemplateCard({
+  template,
+  onOpen,
+  onUse,
+}: {
+  template: TemplateDef;
+  onOpen: () => void;
+  onUse: () => void;
+}) {
+  const [menu, setMenu] = useState(false);
   return (
-    <button
+    <div
       onClick={onOpen}
-      className="group relative flex h-64 flex-col overflow-hidden rounded-xl border border-gray-200 bg-white p-4 text-left transition hover:border-brand/40 hover:shadow-md"
+      className="group relative flex h-64 cursor-pointer flex-col rounded-xl border border-gray-200 bg-white p-4 text-left transition hover:border-brand/40 hover:shadow-md"
     >
       <div className="mb-2 flex items-center justify-between">
         <div className="flex items-center gap-2 font-semibold text-gray-800">
           <span>{template.emoji}</span>
           <span className="truncate">{template.name}</span>
         </div>
-        <MoreVertical size={16} className="shrink-0 text-gray-300" />
+        <div className="relative">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setMenu((o) => !o);
+            }}
+            className="shrink-0 rounded p-1 text-gray-300 hover:bg-gray-100 hover:text-gray-500"
+          >
+            <MoreVertical size={16} />
+          </button>
+          {menu && (
+            <>
+              <div
+                className="fixed inset-0 z-10"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setMenu(false);
+                }}
+              />
+              <div className="absolute right-0 top-8 z-20 w-40 rounded-lg border border-gray-100 bg-white py-1 shadow-lg">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onUse();
+                    setMenu(false);
+                  }}
+                  className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                >
+                  <Copy size={15} /> Use Template
+                </button>
+              </div>
+            </>
+          )}
+        </div>
       </div>
       <div className="relative flex-1 overflow-hidden">
         <div className="scale-[0.82] origin-top-left [width:122%]">
@@ -526,7 +628,7 @@ function TemplateCard({ template, onOpen }: { template: TemplateDef; onOpen: () 
         </div>
         <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-white to-transparent" />
       </div>
-    </button>
+    </div>
   );
 }
 
