@@ -3,10 +3,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { Plus, ChevronDown, ChevronsLeft, ListTodo, FilePlus2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
-import { Plan, PlanDraft } from "@/lib/types";
+import { Plan, PlanDraft, planToDraft, emptyDraft } from "@/lib/types";
 import { SAMPLE_PRESETS } from "@/lib/samplePlans";
 import PlanDetail from "@/components/edge/PlanDetail";
-import NewPlanModal from "@/components/edge/NewPlanModal";
+import PlanEditor from "@/components/edge/PlanEditor";
 
 const dotClass: Record<string, string> = {
   yellow: "bg-yellow-400",
@@ -14,10 +14,13 @@ const dotClass: Record<string, string> = {
   green: "bg-green-500",
 };
 
+type Editing = { id?: string; draft: PlanDraft };
+
 export default function EdgePage() {
   const [plans, setPlans] = useState<Plan[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [modalOpen, setModalOpen] = useState(false);
+  const [editing, setEditing] = useState<Editing | null>(null);
+  const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [dbConnected, setDbConnected] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -32,7 +35,6 @@ export default function EdgePage() {
         .order("created_at", { ascending: true });
 
       if (error) {
-        // Table not set up yet — fall back to sample presets so the UI renders.
         setPlans(SAMPLE_PRESETS);
         setDbConnected(false);
       } else {
@@ -48,42 +50,107 @@ export default function EdgePage() {
   const myPlans = plans.filter((p) => !p.is_preset);
   const presets = plans.filter((p) => p.is_preset);
 
-  // Land on "My Plans": auto-select a user plan if one exists, but never a
-  // preset. When there are no user plans, nothing is selected and the empty
-  // state is shown.
+  // When not editing, land on a user plan if one exists (never a preset).
   useEffect(() => {
-    if (!selectedId && myPlans.length) {
+    if (!editing && !selectedId && myPlans.length) {
       setSelectedId(myPlans[0].id);
     }
-  }, [myPlans, selectedId]);
+  }, [editing, myPlans, selectedId]);
 
-  const selected = plans.find((p) => p.id === selectedId) ?? null;
+  const selected = !editing ? plans.find((p) => p.id === selectedId) ?? null : null;
 
-  async function handleCreate(draft: PlanDraft) {
+  // ---- create / edit flow -------------------------------------------------
+  function startNew() {
+    setEditing({ draft: emptyDraft() });
+    setDirty(false);
+    setSelectedId(null);
+  }
+  function openEdit(plan: Plan) {
+    setEditing({ id: plan.id, draft: planToDraft(plan) });
+    setDirty(false);
+  }
+  function viewPreset(plan: Plan) {
+    setEditing(null);
+    setSelectedId(plan.id);
+  }
+  function handleChange(d: PlanDraft) {
+    setEditing((e) => (e ? { ...e, draft: d } : e));
+    setDirty(true);
+  }
+  function cancel() {
+    setEditing(null);
+    setDirty(false);
+  }
+
+  function toPayload(d: PlanDraft): PlanDraft {
+    return {
+      ...d,
+      name: d.name.trim() || "Untitled Plan",
+      plan_type: (d.plan_type ?? "").trim() || null,
+      trading_notes: (d.trading_notes ?? "").trim() || null,
+      setup_screenshot_url: (d.setup_screenshot_url ?? "").trim() || null,
+      charting_process: d.charting_process.map((s) => s.trim()).filter(Boolean),
+      entry_criteria: d.entry_criteria
+        .map((c) => ({ ...c, label: c.label.trim() }))
+        .filter((c) => c.label),
+      trade_management_rules: d.trade_management_rules.map((s) => s.trim()).filter(Boolean),
+      exit_criteria: d.exit_criteria.map((s) => s.trim()).filter(Boolean),
+      entry_example_urls: d.entry_example_urls.map((s) => s.trim()).filter(Boolean),
+      trading_window_start: (d.trading_window_start ?? "").trim() || null,
+      trading_window_end: (d.trading_window_end ?? "").trim() || null,
+      block_news_note: (d.block_news_note ?? "").trim() || null,
+    };
+  }
+
+  async function persist(close: boolean) {
+    if (!editing) return;
     setSaving(true);
+    const payload = toPayload(editing.draft);
+    const isExisting = !!editing.id && !editing.id.startsWith("local-");
+
     if (dbConnected) {
-      const { data, error } = await supabase
-        .from("plans")
-        .insert({ ...draft })
-        .select()
-        .single();
-      if (!error && data) {
-        const row = data as Plan;
-        setPlans((prev) => [...prev, row]);
-        setSelectedId(row.id);
-      } else {
+      const q = isExisting
+        ? supabase.from("plans").update(payload).eq("id", editing.id!).select().single()
+        : supabase.from("plans").insert(payload).select().single();
+      const { data, error } = await q;
+      if (error || !data) {
         alert(`Could not save plan: ${error?.message ?? "unknown error"}`);
         setSaving(false);
         return;
       }
+      const row = data as Plan;
+      setPlans((prev) =>
+        isExisting ? prev.map((p) => (p.id === row.id ? row : p)) : [...prev, row],
+      );
+      setSelectedId(row.id);
+      setEditing(close ? null : { id: row.id, draft: planToDraft(row) });
     } else {
-      const local: Plan = { ...draft, id: `local-${Date.now()}` };
-      setPlans((prev) => [...prev, local]);
-      setSelectedId(local.id);
+      const id = editing.id ?? `local-${Date.now()}`;
+      const row: Plan = { ...payload, id };
+      setPlans((prev) =>
+        editing.id ? prev.map((p) => (p.id === id ? row : p)) : [...prev, row],
+      );
+      setSelectedId(id);
+      setEditing(close ? null : { id, draft: planToDraft(row) });
     }
+    setDirty(false);
     setSaving(false);
-    setModalOpen(false);
   }
+
+  async function uploadImage(file: File): Promise<string | null> {
+    if (!dbConnected) return URL.createObjectURL(file); // local preview
+    const path = `${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.\-_]/g, "_")}`;
+    const { error } = await supabase.storage.from("plan-images").upload(path, file);
+    if (error) {
+      alert(`Image upload failed: ${error.message}. (Did you run migration 0002?)`);
+      return null;
+    }
+    return supabase.storage.from("plan-images").getPublicUrl(path).data.publicUrl;
+  }
+
+  // Highlighted row key
+  const currentKey = editing ? editing.id ?? "__draft__" : selectedId;
+  const showDraftRow = !!editing && !editing.id;
 
   return (
     <div className="min-h-screen px-8 py-7">
@@ -97,7 +164,7 @@ export default function EdgePage() {
           </p>
         </div>
         <button
-          onClick={() => setModalOpen(true)}
+          onClick={startNew}
           className="flex items-center gap-2 rounded-lg bg-brand px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-105"
         >
           <Plus size={16} /> New Plan <ChevronDown size={15} className="opacity-80" />
@@ -118,7 +185,7 @@ export default function EdgePage() {
             <div className="flex items-center gap-2">
               <span className="text-sm font-semibold text-gray-700">MY PLANS</span>
               <button
-                onClick={() => setModalOpen(true)}
+                onClick={startNew}
                 className="rounded p-0.5 text-brand hover:bg-brand-soft"
               >
                 <Plus size={16} />
@@ -129,12 +196,12 @@ export default function EdgePage() {
             </button>
           </div>
 
-          {myPlans.length === 0 ? (
+          {myPlans.length === 0 && !showDraftRow ? (
             <div className="flex flex-col items-center gap-3 py-8 text-center">
               <ListTodo size={40} className="text-gray-200" strokeWidth={1.5} />
               <p className="text-sm text-gray-400">No Edge Plans yet</p>
               <button
-                onClick={() => setModalOpen(true)}
+                onClick={startNew}
                 className="flex items-center gap-2 rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
               >
                 <Plus size={15} className="text-brand" /> New Plan
@@ -143,12 +210,24 @@ export default function EdgePage() {
             </div>
           ) : (
             <div className="space-y-1.5">
+              {showDraftRow && (
+                <PlanRow
+                  plan={{
+                    ...editing!.draft,
+                    id: "__draft__",
+                    name: editing!.draft.name || "Untitled Plan",
+                    plan_type: null,
+                  }}
+                  active
+                  onClick={() => {}}
+                />
+              )}
               {myPlans.map((p) => (
                 <PlanRow
                   key={p.id}
                   plan={p}
-                  active={p.id === selectedId}
-                  onClick={() => setSelectedId(p.id)}
+                  active={currentKey === p.id}
+                  onClick={() => openEdit(p)}
                 />
               ))}
             </div>
@@ -162,8 +241,8 @@ export default function EdgePage() {
                   <PlanRow
                     key={p.id}
                     plan={p}
-                    active={p.id === selectedId}
-                    onClick={() => setSelectedId(p.id)}
+                    active={currentKey === p.id}
+                    onClick={() => viewPreset(p)}
                   />
                 ))}
               </div>
@@ -171,22 +250,26 @@ export default function EdgePage() {
           )}
         </div>
 
-        {/* Detail panel */}
+        {/* Right panel */}
         <div className="flex-1">
-          {selected ? (
+          {editing ? (
+            <PlanEditor
+              value={editing.draft}
+              onChange={handleChange}
+              dirty={dirty}
+              saving={saving}
+              onSaveNow={() => persist(false)}
+              onSaveClose={() => persist(true)}
+              onCancel={cancel}
+              uploadImage={uploadImage}
+            />
+          ) : selected ? (
             <PlanDetail plan={selected} />
           ) : (
-            <MyPlansEmpty loading={loading} onCreate={() => setModalOpen(true)} />
+            <MyPlansEmpty loading={loading} onCreate={startNew} />
           )}
         </div>
       </div>
-
-      <NewPlanModal
-        open={modalOpen}
-        onClose={() => setModalOpen(false)}
-        onCreate={handleCreate}
-        saving={saving}
-      />
     </div>
   );
 }
@@ -225,7 +308,7 @@ function PlanRow({
   active,
   onClick,
 }: {
-  plan: Plan;
+  plan: { id: string; name: string; plan_type: string | null; dot_color: string };
   active: boolean;
   onClick: () => void;
 }) {

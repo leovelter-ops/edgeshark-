@@ -32,6 +32,9 @@ export const SAMPLE_PRESETS: Plan[] = [
     trading_notes: null,
     setup_screenshot_url: null,
     entry_example_urls: [],
+    trading_window_start: null,
+    trading_window_end: null,
+    block_news_note: null,
   },
   {
     id: "sample-jasons-strategy",
@@ -50,6 +53,9 @@ export const SAMPLE_PRESETS: Plan[] = [
     trading_notes: null,
     setup_screenshot_url: null,
     entry_example_urls: [],
+    trading_window_start: null,
+    trading_window_end: null,
+    block_news_note: null,
   },
   {
     id: "sample-weekly-range",
@@ -68,5 +74,8 @@ export const SAMPLE_PRESETS: Plan[] = [
     trading_notes: null,
     setup_screenshot_url: null,
     entry_example_urls: [],
+    trading_window_start: null,
+    trading_window_end: null,
+    block_news_note: null,
   },
 ];
