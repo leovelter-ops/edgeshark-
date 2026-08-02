@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Search,
   ChevronsLeft,
+  ChevronsRight,
   ChevronDown,
   ChevronUp,
   Plus,
@@ -66,6 +67,7 @@ export default function NotebookPage() {
   const [newNoteMenu, setNewNoteMenu] = useState(false);
   const [recentOpen, setRecentOpen] = useState(false);
   const [allOpen, setAllOpen] = useState(true);
+  const [panelOpen, setPanelOpen] = useState(true);
   const [dbReady, setDbReady] = useState(false);
   const [loaded, setLoaded] = useState(false);
 
@@ -205,7 +207,17 @@ export default function NotebookPage() {
       </div>
 
       <div className="flex gap-6">
+        {!panelOpen && (
+          <button
+            onClick={() => setPanelOpen(true)}
+            title="Expand panel"
+            className="h-9 shrink-0 self-start rounded-lg border border-gray-200 bg-white p-2 text-gray-400 shadow-sm hover:text-gray-600"
+          >
+            <ChevronsRight size={16} />
+          </button>
+        )}
         {/* Left column */}
+        {panelOpen && (
         <div className="flex w-72 shrink-0 flex-col rounded-2xl border border-black/5 bg-white p-4 shadow-sm">
           <div className="mb-4 flex items-center gap-2">
             <div className="relative flex-1">
@@ -217,7 +229,11 @@ export default function NotebookPage() {
                 className="w-full rounded-lg border border-gray-200 bg-white py-2 pl-9 pr-3 text-sm outline-none placeholder:text-gray-400 focus:border-brand focus:ring-2 focus:ring-brand/20"
               />
             </div>
-            <button className="rounded-lg border border-gray-200 p-2 text-gray-300 hover:text-gray-500">
+            <button
+              onClick={() => setPanelOpen(false)}
+              title="Collapse panel"
+              className="rounded-lg border border-gray-200 p-2 text-gray-300 hover:text-gray-500"
+            >
               <ChevronsLeft size={16} />
             </button>
           </div>
@@ -301,6 +317,7 @@ export default function NotebookPage() {
             ))}
           </div>
         </div>
+        )}
 
         {/* Right panel */}
         <div className="min-w-0 flex-1">
