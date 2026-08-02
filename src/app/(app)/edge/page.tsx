@@ -11,6 +11,8 @@ import {
   CheckCircle2,
   Copy,
   Trash2,
+  X,
+  BarChart3,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { Plan, PlanDraft, planToDraft, emptyDraft } from "@/lib/types";
@@ -34,6 +36,8 @@ export default function EdgePage() {
   const [saving, setSaving] = useState(false);
   const [dbConnected, setDbConnected] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [newPlanMenu, setNewPlanMenu] = useState<null | "header" | "list">(null);
+  const [selectPresetOpen, setSelectPresetOpen] = useState(false);
 
   const supabase = useMemo(() => createClient(), []);
 
@@ -239,12 +243,28 @@ export default function EdgePage() {
             place.
           </p>
         </div>
-        <button
-          onClick={startNew}
-          className="flex items-center gap-2 rounded-lg bg-brand px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-105"
-        >
-          <Plus size={16} /> New Plan <ChevronDown size={15} className="opacity-80" />
-        </button>
+        <div className="relative">
+          <button
+            onClick={() => setNewPlanMenu((m) => (m === "header" ? null : "header"))}
+            className="flex items-center gap-2 rounded-lg bg-brand px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-105"
+          >
+            <Plus size={16} /> New Plan <ChevronDown size={15} className="opacity-80" />
+          </button>
+          {newPlanMenu === "header" && (
+            <NewPlanMenu
+              align="right"
+              onBlank={() => {
+                startNew();
+                setNewPlanMenu(null);
+              }}
+              onPreset={() => {
+                setSelectPresetOpen(true);
+                setNewPlanMenu(null);
+              }}
+              onClose={() => setNewPlanMenu(null)}
+            />
+          )}
+        </div>
       </div>
 
       {!dbConnected && !loading && (
@@ -276,13 +296,29 @@ export default function EdgePage() {
             <div className="flex flex-col items-center gap-3 py-8 text-center">
               <ListTodo size={40} className="text-gray-200" strokeWidth={1.5} />
               <p className="text-sm text-gray-400">No Edge Plans yet</p>
-              <button
-                onClick={startNew}
-                className="flex items-center gap-2 rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
-              >
-                <Plus size={15} className="text-brand" /> New Plan
-                <ChevronDown size={14} className="text-gray-400" />
-              </button>
+              <div className="relative">
+                <button
+                  onClick={() => setNewPlanMenu((m) => (m === "list" ? null : "list"))}
+                  className="flex items-center gap-2 rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                >
+                  <Plus size={15} className="text-brand" /> New Plan
+                  <ChevronDown size={14} className="text-gray-400" />
+                </button>
+                {newPlanMenu === "list" && (
+                  <NewPlanMenu
+                    align="left"
+                    onBlank={() => {
+                      startNew();
+                      setNewPlanMenu(null);
+                    }}
+                    onPreset={() => {
+                      setSelectPresetOpen(true);
+                      setNewPlanMenu(null);
+                    }}
+                    onClose={() => setNewPlanMenu(null)}
+                  />
+                )}
+              </div>
             </div>
           ) : (
             <div className="space-y-1.5">
@@ -357,6 +393,105 @@ export default function EdgePage() {
           ) : (
             <MyPlansEmpty loading={loading} onCreate={startNew} />
           )}
+        </div>
+      </div>
+
+      {selectPresetOpen && (
+        <SelectPresetModal
+          presets={presets}
+          onPick={(p) => {
+            viewPlan(p);
+            setSelectPresetOpen(false);
+          }}
+          onClose={() => setSelectPresetOpen(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+function NewPlanMenu({
+  align,
+  onBlank,
+  onPreset,
+  onClose,
+}: {
+  align: "left" | "right";
+  onBlank: () => void;
+  onPreset: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <>
+      <div className="fixed inset-0 z-10" onClick={onClose} />
+      <div
+        className={`absolute top-full z-20 mt-1 w-52 overflow-hidden rounded-lg border border-gray-100 bg-white py-1 shadow-lg ${
+          align === "right" ? "right-0" : "left-0"
+        }`}
+      >
+        <button
+          onClick={onBlank}
+          className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+        >
+          <Plus size={15} /> Create Blank Plan
+        </button>
+        <button
+          onClick={onPreset}
+          className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+        >
+          <Copy size={15} /> Create From Preset
+        </button>
+      </div>
+    </>
+  );
+}
+
+function SelectPresetModal({
+  presets,
+  onPick,
+  onClose,
+}: {
+  presets: Plan[];
+  onPick: (p: Plan) => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/30 p-4 pt-24 backdrop-blur-sm">
+      <div className="w-full max-w-5xl rounded-2xl bg-white p-6 shadow-xl">
+        <div className="mb-5 flex items-center justify-between">
+          <h3 className="text-xl font-bold text-gray-900">Select Preset</h3>
+          <button onClick={onClose} className="rounded p-1 text-gray-400 hover:bg-gray-100">
+            <X size={18} />
+          </button>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {presets.map((p) => (
+            <button
+              key={p.id}
+              onClick={() => onPick(p)}
+              className="flex h-72 flex-col overflow-hidden rounded-xl border border-gray-200 bg-white p-4 text-left transition hover:border-brand/40 hover:shadow-md"
+            >
+              <div className="mb-3 flex items-center gap-2 font-semibold text-gray-800">
+                <span className={`h-2 w-2 shrink-0 rounded-full ${dotClass[p.dot_color]}`} />
+                <span className="truncate">{p.name}</span>
+              </div>
+              <div className="text-xs text-gray-400">Plan Type</div>
+              <div className="mb-4 truncate text-sm text-gray-700">{p.plan_type || "—"}</div>
+              <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-gray-400">
+                <BarChart3 size={13} /> Charting Process
+              </div>
+              <div className="space-y-2 overflow-hidden">
+                {p.charting_process.slice(0, 4).map((s, i) => (
+                  <div key={i} className="flex gap-2 text-sm text-gray-700">
+                    <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-brand-soft text-xs font-semibold text-brand">
+                      {i + 1}
+                    </span>
+                    <span className="line-clamp-2">{s}</span>
+                  </div>
+                ))}
+              </div>
+            </button>
+          ))}
         </div>
       </div>
     </div>
