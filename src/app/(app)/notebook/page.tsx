@@ -67,7 +67,8 @@ export default function NotebookPage() {
   const [folders, setFolders] = useState<string[]>([]);
   const [myTemplates, setMyTemplates] = useState<TemplateDef[]>([]);
   const [folderAssign, setFolderAssign] = useState<Record<string, string>>({});
-  const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
+  const [foldersOpen, setFoldersOpen] = useState(true);
+  const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({});
   const [view, setView] = useState<View>({ kind: "browse" });
   const [search, setSearch] = useState("");
   const [newFolderOpen, setNewFolderOpen] = useState(false);
@@ -193,7 +194,6 @@ export default function NotebookPage() {
 
   const sorted = [...notes]
     .filter(match)
-    .filter((n) => !selectedFolder || folderAssign[n.id] === selectedFolder)
     .sort(
       (a, b) =>
         Number(b.is_pinned) - Number(a.is_pinned) ||
@@ -360,35 +360,64 @@ export default function NotebookPage() {
             ))}
 
           {/* Folders */}
-          <div className="mb-2 mt-6 flex items-center gap-2 text-sm font-semibold text-gray-500">
-            FOLDERS <span className="text-gray-400">{folders.length}</span>
+          <div className="mb-2 mt-6 flex items-center justify-between">
+            <div className="flex items-center gap-2 text-sm font-semibold text-gray-500">
+              FOLDERS <span className="text-gray-400">{folders.length}</span>
+              <button
+                onClick={() => setNewFolderOpen(true)}
+                className="rounded p-0.5 text-gray-400 hover:bg-gray-100 hover:text-brand"
+              >
+                <Plus size={15} />
+              </button>
+            </div>
             <button
-              onClick={() => setNewFolderOpen(true)}
-              className="rounded p-0.5 text-gray-400 hover:bg-gray-100 hover:text-brand"
+              onClick={() => setFoldersOpen((o) => !o)}
+              className="text-gray-400 hover:text-gray-600"
             >
-              <Plus size={15} />
+              {foldersOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
             </button>
           </div>
-          <div className="space-y-1">
-            {folders.map((f) => {
-              const active = selectedFolder === f;
-              return (
-                <button
-                  key={f}
-                  onClick={() => setSelectedFolder(active ? null : f)}
-                  className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition ${
-                    active ? "bg-brand-soft text-brand" : "text-gray-700 hover:bg-gray-50"
-                  }`}
-                >
-                  <Folder size={15} className={active ? "text-brand" : "text-gray-400"} />
-                  <span className="truncate">{f}</span>
-                  <span className="ml-auto text-xs text-gray-400">
-                    {notes.filter((n) => folderAssign[n.id] === f).length}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
+          {foldersOpen && (
+            <div className="space-y-1">
+              {folders.map((f) => {
+                const folderNotes = notes.filter((n) => folderAssign[n.id] === f);
+                const exp = !!expandedFolders[f];
+                return (
+                  <div key={f}>
+                    <button
+                      onClick={() => setExpandedFolders((e) => ({ ...e, [f]: !e[f] }))}
+                      className="flex w-full items-center gap-1.5 rounded-lg px-2 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                    >
+                      {exp ? (
+                        <ChevronDown size={14} className="shrink-0 text-gray-400" />
+                      ) : (
+                        <ChevronRight size={14} className="shrink-0 text-gray-400" />
+                      )}
+                      <Folder size={15} className="shrink-0 text-gray-400" />
+                      <span className="truncate">{f}</span>
+                      <span className="ml-auto text-xs text-gray-400">{folderNotes.length}</span>
+                    </button>
+                    {exp && (
+                      <div className="ml-4 space-y-1 border-l border-gray-100 pl-2">
+                        {folderNotes.length === 0 ? (
+                          <p className="px-2 py-1.5 text-xs text-gray-400">Empty</p>
+                        ) : (
+                          folderNotes.map((n) => (
+                            <NoteRow
+                              key={n.id}
+                              note={n}
+                              active={view.kind === "note" && view.id === n.id}
+                              onClick={() => setView({ kind: "note", id: n.id })}
+                            />
+                          ))
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
         )}
 
