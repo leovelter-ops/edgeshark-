@@ -16,8 +16,10 @@ import {
   ArrowLeft,
   MoreVertical,
   Trash2,
-  Pencil,
-  Eye,
+  ChevronRight,
+  FolderInput,
+  Save,
+  FileDown,
   X,
   FilePlus2,
 } from "lucide-react";
@@ -36,6 +38,8 @@ interface Note {
 
 const NOTES_KEY = "edgeflo_notes";
 const FOLDERS_KEY = "edgeflo_folders";
+const MYTEMPLATES_KEY = "edgeflo_mytemplates";
+const FOLDERASSIGN_KEY = "edgeflo_folderassign";
 const BLANK_BODY = "Let's get started!";
 
 type View = { kind: "browse" } | { kind: "template"; id: string } | { kind: "note"; id: string };
@@ -61,6 +65,9 @@ function relativeTime(iso: string): string {
 export default function NotebookPage() {
   const [notes, setNotes] = useState<Note[]>([]);
   const [folders, setFolders] = useState<string[]>([]);
+  const [myTemplates, setMyTemplates] = useState<TemplateDef[]>([]);
+  const [folderAssign, setFolderAssign] = useState<Record<string, string>>({});
+  const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
   const [view, setView] = useState<View>({ kind: "browse" });
   const [search, setSearch] = useState("");
   const [newFolderOpen, setNewFolderOpen] = useState(false);
@@ -94,6 +101,8 @@ export default function NotebookPage() {
       }
       try {
         setFolders(JSON.parse(localStorage.getItem(FOLDERS_KEY) ?? "[]"));
+        setMyTemplates(JSON.parse(localStorage.getItem(MYTEMPLATES_KEY) ?? "[]"));
+        setFolderAssign(JSON.parse(localStorage.getItem(FOLDERASSIGN_KEY) ?? "{}"));
       } catch {
         /* ignore */
       }
@@ -109,6 +118,25 @@ export default function NotebookPage() {
   function persistFolders(next: string[]) {
     setFolders(next);
     localStorage.setItem(FOLDERS_KEY, JSON.stringify(next));
+  }
+
+  function saveAsTemplate(n: Note) {
+    const tpl: TemplateDef = {
+      id: `my-${Date.now()}`,
+      name: n.title || "Untitled",
+      emoji: "📝",
+      category: "Playbook",
+      body: n.content,
+    };
+    const next = [tpl, ...myTemplates];
+    setMyTemplates(next);
+    localStorage.setItem(MYTEMPLATES_KEY, JSON.stringify(next));
+  }
+
+  function moveToFolder(n: Note, folder: string) {
+    const next = { ...folderAssign, [n.id]: folder };
+    setFolderAssign(next);
+    localStorage.setItem(FOLDERASSIGN_KEY, JSON.stringify(next));
   }
 
   async function createNote(title: string, content: string) {
@@ -164,6 +192,7 @@ export default function NotebookPage() {
 
   const sorted = [...notes]
     .filter(match)
+    .filter((n) => !selectedFolder || folderAssign[n.id] === selectedFolder)
     .sort(
       (a, b) =>
         Number(b.is_pinned) - Number(a.is_pinned) ||
@@ -175,7 +204,9 @@ export default function NotebookPage() {
     .slice(0, 5);
 
   const activeTemplate =
-    view.kind === "template" ? TEMPLATES.find((t) => t.id === view.id) ?? null : null;
+    view.kind === "template"
+      ? [...myTemplates, ...TEMPLATES].find((t) => t.id === view.id) ?? null
+      : null;
   const activeNote = view.kind === "note" ? notes.find((n) => n.id === view.id) ?? null : null;
 
   return (
@@ -309,12 +340,24 @@ export default function NotebookPage() {
             </button>
           </div>
           <div className="space-y-1">
-            {folders.map((f) => (
-              <div key={f} className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-gray-700">
-                <Folder size={15} className="text-gray-400" />
-                <span className="truncate">{f}</span>
-              </div>
-            ))}
+            {folders.map((f) => {
+              const active = selectedFolder === f;
+              return (
+                <button
+                  key={f}
+                  onClick={() => setSelectedFolder(active ? null : f)}
+                  className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition ${
+                    active ? "bg-brand-soft text-brand" : "text-gray-700 hover:bg-gray-50"
+                  }`}
+                >
+                  <Folder size={15} className={active ? "text-brand" : "text-gray-400"} />
+                  <span className="truncate">{f}</span>
+                  <span className="ml-auto text-xs text-gray-400">
+                    {notes.filter((n) => folderAssign[n.id] === f).length}
+                  </span>
+                </button>
+              );
+            })}
           </div>
         </div>
         )}
@@ -331,12 +374,20 @@ export default function NotebookPage() {
             <NoteEditor
               key={activeNote.id}
               note={activeNote}
+              folders={folders}
               onChange={(patch) => saveNote(activeNote.id, patch)}
               onDelete={() => deleteNote(activeNote.id)}
               onBack={() => setView({ kind: "browse" })}
+              onDuplicate={() => createNote(`${activeNote.title || "Untitled"} (copy)`, activeNote.content)}
+              onSaveTemplate={() => saveAsTemplate(activeNote)}
+              onExportPdf={() => window.print()}
+              onMoveToFolder={(folder) => moveToFolder(activeNote, folder)}
             />
           ) : (
-            <TemplateBrowser onOpen={(id) => setView({ kind: "template", id })} />
+            <TemplateBrowser
+              myTemplates={myTemplates}
+              onOpen={(id) => setView({ kind: "template", id })}
+            />
           )}
         </div>
       </div>
@@ -408,7 +459,13 @@ function NoteRow({
 
 // ------------------------------------------------------------------ Templates
 
-function TemplateBrowser({ onOpen }: { onOpen: (id: string) => void }) {
+function TemplateBrowser({
+  myTemplates,
+  onOpen,
+}: {
+  myTemplates: TemplateDef[];
+  onOpen: (id: string) => void;
+}) {
   return (
     <div className="rounded-2xl border border-black/5 bg-white p-6 shadow-sm">
       <h2 className="mb-5 text-2xl font-bold text-gray-900">Templates</h2>
@@ -416,11 +473,18 @@ function TemplateBrowser({ onOpen }: { onOpen: (id: string) => void }) {
       <div className="mb-4 flex items-center gap-2 text-lg font-semibold text-gray-800">
         <Pin size={15} /> Pinned Templates <span className="text-sm font-normal text-gray-400">0</span>
       </div>
-      <div className="mb-4 flex items-center gap-2 text-lg font-semibold text-gray-800">
-        My Templates <span className="text-sm font-normal text-gray-400">0</span>
-        <button className="rounded p-0.5 text-gray-400 hover:bg-gray-100 hover:text-brand">
-          <Plus size={16} />
-        </button>
+
+      <div className="mb-8">
+        <div className="mb-3 flex items-center gap-2 text-lg font-semibold text-gray-800">
+          My Templates <span className="text-sm font-normal text-gray-400">{myTemplates.length}</span>
+        </div>
+        {myTemplates.length > 0 && (
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+            {myTemplates.map((t) => (
+              <TemplateCard key={t.id} template={t} onOpen={() => onOpen(t.id)} />
+            ))}
+          </div>
+        )}
       </div>
 
       {CATEGORY_META.map(({ name, emoji }) => {
@@ -508,18 +572,36 @@ function TemplateView({
 
 function NoteEditor({
   note,
+  folders,
   onChange,
   onDelete,
   onBack,
+  onDuplicate,
+  onSaveTemplate,
+  onExportPdf,
+  onMoveToFolder,
 }: {
   note: Note;
+  folders: string[];
   onChange: (patch: Partial<Pick<Note, "title" | "content" | "is_pinned">>) => void;
   onDelete: () => void;
   onBack: () => void;
+  onDuplicate: () => void;
+  onSaveTemplate: () => void;
+  onExportPdf: () => void;
+  onMoveToFolder: (folder: string) => void;
 }) {
   // New/blank notes open ready to type; template notes open in the rendered view.
-  const [editing, setEditing] = useState(note.content.trim() === BLANK_BODY || note.content.trim() === "");
+  const [editing, setEditing] = useState(
+    note.content.trim() === BLANK_BODY || note.content.trim() === "",
+  );
   const [menuOpen, setMenuOpen] = useState(false);
+  const [folderSub, setFolderSub] = useState(false);
+
+  const closeMenu = () => {
+    setMenuOpen(false);
+    setFolderSub(false);
+  };
 
   return (
     <div className="flex min-h-[calc(100vh-8rem)] flex-col rounded-2xl border border-black/5 bg-white p-8 shadow-sm">
@@ -539,13 +621,6 @@ function NoteEditor({
         </div>
         <div className="flex items-center gap-2">
           <span className="mr-1 text-sm text-gray-400">Auto-Saved</span>
-          <button
-            onClick={() => setEditing((v) => !v)}
-            title={editing ? "Preview" : "Edit"}
-            className="rounded-lg border border-gray-200 p-2 text-gray-500 hover:bg-gray-50"
-          >
-            {editing ? <Eye size={16} /> : <Pencil size={16} />}
-          </button>
           <button
             onClick={() => onChange({ is_pinned: !note.is_pinned })}
             title={note.is_pinned ? "Unpin" : "Pin"}
@@ -571,26 +646,65 @@ function NoteEditor({
             </button>
             {menuOpen && (
               <>
-                <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} />
-                <div className="absolute right-0 top-11 z-20 w-40 overflow-hidden rounded-lg border border-gray-100 bg-white py-1 shadow-lg">
+                <div className="fixed inset-0 z-10" onClick={closeMenu} />
+                <div className="absolute right-0 top-11 z-20 w-56 rounded-lg border border-gray-100 bg-white py-1 shadow-lg">
+                  <div className="relative">
+                    <button
+                      onClick={() => setFolderSub((o) => !o)}
+                      className="flex w-full items-center justify-between px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                    >
+                      <span className="flex items-center gap-2.5">
+                        <FolderInput size={15} /> Move to Folder
+                      </span>
+                      <ChevronRight size={15} className="text-gray-400" />
+                    </button>
+                    {folderSub && (
+                      <div className="absolute right-full top-0 mr-1 w-44 rounded-lg border border-gray-100 bg-white py-1 shadow-lg">
+                        {folders.length === 0 ? (
+                          <div className="px-3 py-2 text-sm text-gray-400">No folders yet</div>
+                        ) : (
+                          folders.map((f) => (
+                            <button
+                              key={f}
+                              onClick={() => {
+                                onMoveToFolder(f);
+                                closeMenu();
+                              }}
+                              className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                            >
+                              <Folder size={15} className="text-gray-400" /> {f}
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    )}
+                  </div>
                   <button
                     onClick={() => {
-                      setEditing((v) => !v);
-                      setMenuOpen(false);
+                      onDuplicate();
+                      closeMenu();
                     }}
                     className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
                   >
-                    {editing ? <Eye size={15} /> : <Pencil size={15} />}
-                    {editing ? "Preview" : "Edit"}
+                    <Copy size={15} /> Duplicate
                   </button>
                   <button
                     onClick={() => {
-                      onDelete();
-                      setMenuOpen(false);
+                      onSaveTemplate();
+                      closeMenu();
                     }}
-                    className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-red-500 hover:bg-gray-50"
+                    className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
                   >
-                    <Trash2 size={15} /> Delete
+                    <Save size={15} /> Save as a template
+                  </button>
+                  <button
+                    onClick={() => {
+                      onExportPdf();
+                      closeMenu();
+                    }}
+                    className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                  >
+                    <FileDown size={15} /> Export to PDF
                   </button>
                 </div>
               </>
@@ -601,13 +715,17 @@ function NoteEditor({
 
       {editing ? (
         <textarea
+          autoFocus
           value={note.content}
           onChange={(e) => onChange({ content: e.target.value })}
+          onBlur={() => setEditing(false)}
           placeholder="Start writing…"
           className="flex-1 resize-none border-none bg-transparent font-mono text-[13px] leading-relaxed text-gray-800 outline-none placeholder:text-gray-300"
         />
       ) : (
-        <NoteBody src={note.content} />
+        <div onClick={() => setEditing(true)} className="flex-1 cursor-text">
+          <NoteBody src={note.content} />
+        </div>
       )}
     </div>
   );
