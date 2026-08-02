@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Plus, ChevronDown, ChevronsLeft, ListTodo } from "lucide-react";
+import { Plus, ChevronDown, ChevronsLeft, ListTodo, FilePlus2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { Plan, PlanDraft } from "@/lib/types";
 import { SAMPLE_PRESETS } from "@/lib/samplePlans";
@@ -48,12 +48,14 @@ export default function EdgePage() {
   const myPlans = plans.filter((p) => !p.is_preset);
   const presets = plans.filter((p) => p.is_preset);
 
-  // Default selection: first preset (or first plan).
+  // Land on "My Plans": auto-select a user plan if one exists, but never a
+  // preset. When there are no user plans, nothing is selected and the empty
+  // state is shown.
   useEffect(() => {
-    if (!selectedId && plans.length) {
-      setSelectedId((presets[0] ?? plans[0]).id);
+    if (!selectedId && myPlans.length) {
+      setSelectedId(myPlans[0].id);
     }
-  }, [plans, presets, selectedId]);
+  }, [myPlans, selectedId]);
 
   const selected = plans.find((p) => p.id === selectedId) ?? null;
 
@@ -174,9 +176,7 @@ export default function EdgePage() {
           {selected ? (
             <PlanDetail plan={selected} />
           ) : (
-            <div className="rounded-2xl border border-black/5 bg-white p-10 text-center text-gray-400 shadow-sm">
-              {loading ? "Loading…" : "Select a plan to view it."}
-            </div>
+            <MyPlansEmpty loading={loading} onCreate={() => setModalOpen(true)} />
           )}
         </div>
       </div>
@@ -187,6 +187,35 @@ export default function EdgePage() {
         onCreate={handleCreate}
         saving={saving}
       />
+    </div>
+  );
+}
+
+function MyPlansEmpty({
+  loading,
+  onCreate,
+}: {
+  loading: boolean;
+  onCreate: () => void;
+}) {
+  return (
+    <div className="min-h-[calc(100vh-8rem)] rounded-2xl border border-black/5 bg-white p-8 shadow-sm">
+      <h2 className="text-2xl font-bold text-gray-900">My Plans</h2>
+      {!loading && (
+        <div className="flex flex-col items-center justify-center gap-4 py-32 text-center">
+          <FilePlus2 size={56} className="text-gray-200" strokeWidth={1.5} />
+          <h3 className="text-xl font-bold text-gray-800">No plans yet</h3>
+          <p className="max-w-sm text-gray-500">
+            Create your first trading plan to define your edge and trading rules.
+          </p>
+          <button
+            onClick={onCreate}
+            className="mt-2 rounded-lg bg-brand px-6 py-3 text-sm font-semibold text-white shadow-sm transition hover:brightness-105"
+          >
+            Create My First Plan
+          </button>
+        </div>
+      )}
     </div>
   );
 }
