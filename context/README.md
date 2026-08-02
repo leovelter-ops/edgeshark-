@@ -26,5 +26,12 @@ A clone of **Edgeflo** (the app we are copying). We copy Edgeflo completely **ex
 - `@supabase/supabase-js` + `@supabase/ssr`.
 - Supabase clients: `src/lib/supabase/client.ts` (browser), `src/lib/supabase/server.ts` (server).
 
+## Git / GitHub accounts (IMPORTANT — two accounts on this machine)
+- This repo pushes ONLY as **`leovelter-ops`**. Enforced repo-locally:
+  - remote: `https://leovelter-ops@github.com/leovelter-ops/edgeshark-.git`
+  - `git config credential.username leovelter-ops`
+- **`SatelliteHomeGroup-ops`** is the GLOBAL credential — belongs to the Satellite app only.
+  Never push this project as that account; never disconnect it (satellite work is ongoing).
+
 ## Status
-- Scaffolded. Awaiting screenshots to build screen-by-screen.
+- Scaffolded + pushed to `main`. Awaiting screenshots to build screen-by-screen.
