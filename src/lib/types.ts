@@ -12,6 +12,7 @@ export interface Plan {
   plan_type: string | null;
   dot_color: DotColor;
   is_preset: boolean;
+  is_active: boolean;
 
   // Risk controls
   max_trades_per_day: number | null;
@@ -49,6 +50,7 @@ export function emptyDraft(): PlanDraft {
     plan_type: "",
     dot_color: "red",
     is_preset: false,
+    is_active: false,
     max_trades_per_day: 5,
     max_daily_loss: 100,
     max_daily_profit: 1000,

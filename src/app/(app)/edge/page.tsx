@@ -1,7 +1,17 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Plus, ChevronDown, ChevronsLeft, ListTodo, FilePlus2 } from "lucide-react";
+import {
+  Plus,
+  ChevronDown,
+  ChevronsLeft,
+  ListTodo,
+  FilePlus2,
+  MoreVertical,
+  CheckCircle2,
+  Copy,
+  Trash2,
+} from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { Plan, PlanDraft, planToDraft, emptyDraft } from "@/lib/types";
 import { SAMPLE_PRESETS } from "@/lib/samplePlans";
@@ -47,7 +57,10 @@ export default function EdgePage() {
     })();
   }, [supabase]);
 
-  const myPlans = plans.filter((p) => !p.is_preset);
+  // Active plan pinned to the top (sort is stable, so others keep insert order).
+  const myPlans = plans
+    .filter((p) => !p.is_preset)
+    .sort((a, b) => Number(b.is_active) - Number(a.is_active));
   const presets = plans.filter((p) => p.is_preset);
 
   // When not editing, land on a user plan if one exists (never a preset).
@@ -69,7 +82,7 @@ export default function EdgePage() {
     setEditing({ id: plan.id, draft: planToDraft(plan) });
     setDirty(false);
   }
-  function viewPreset(plan: Plan) {
+  function viewPlan(plan: Plan) {
     setEditing(null);
     setSelectedId(plan.id);
   }
@@ -146,6 +159,69 @@ export default function EdgePage() {
       return null;
     }
     return supabase.storage.from("plan-images").getPublicUrl(path).data.publicUrl;
+  }
+
+  async function handleDelete(plan: Plan) {
+    if (!confirm(`Delete "${plan.name}"? This can't be undone.`)) return;
+    if (dbConnected && !plan.id.startsWith("local-")) {
+      const { error } = await supabase.from("plans").delete().eq("id", plan.id);
+      if (error) {
+        alert(`Could not delete: ${error.message}`);
+        return;
+      }
+    }
+    setPlans((prev) => prev.filter((p) => p.id !== plan.id));
+    if (selectedId === plan.id) setSelectedId(null);
+    if (editing?.id === plan.id) setEditing(null);
+  }
+
+  async function handleDuplicate(plan: Plan, keepName = false) {
+    const draft = {
+      ...planToDraft(plan),
+      name: keepName ? plan.name : `${plan.name} (copy)`,
+      is_preset: false,
+      is_active: false,
+    };
+    const payload = toPayload(draft);
+    if (dbConnected) {
+      const { data, error } = await supabase.from("plans").insert(payload).select().single();
+      if (error || !data) {
+        alert(`Could not duplicate: ${error?.message ?? "unknown error"}`);
+        return;
+      }
+      const row = data as Plan;
+      setPlans((prev) => [...prev, row]);
+      setSelectedId(row.id);
+    } else {
+      const row: Plan = { ...payload, id: `local-${Date.now()}` };
+      setPlans((prev) => [...prev, row]);
+      setSelectedId(row.id);
+    }
+    setEditing(null);
+  }
+
+  async function handleSetActive(plan: Plan, active: boolean) {
+    if (dbConnected && !plan.id.startsWith("local-")) {
+      if (active) {
+        // Only one active plan at a time — clear the current one first.
+        await supabase.from("plans").update({ is_active: false }).eq("is_active", true);
+      }
+      const { error } = await supabase
+        .from("plans")
+        .update({ is_active: active })
+        .eq("id", plan.id);
+      if (error) {
+        alert(`Could not update active state: ${error.message}`);
+        return;
+      }
+    }
+    setPlans((prev) =>
+      prev.map((p) => {
+        if (p.id === plan.id) return { ...p, is_active: active };
+        if (active && p.is_active) return { ...p, is_active: false };
+        return p;
+      }),
+    );
   }
 
   // Highlighted row key
@@ -227,7 +303,13 @@ export default function EdgePage() {
                   key={p.id}
                   plan={p}
                   active={currentKey === p.id}
-                  onClick={() => openEdit(p)}
+                  onClick={() => viewPlan(p)}
+                  menu={{
+                    isActive: p.is_active,
+                    onSetActive: () => handleSetActive(p, !p.is_active),
+                    onDuplicate: () => handleDuplicate(p),
+                    onDelete: () => handleDelete(p),
+                  }}
                 />
               ))}
             </div>
@@ -242,7 +324,7 @@ export default function EdgePage() {
                     key={p.id}
                     plan={p}
                     active={currentKey === p.id}
-                    onClick={() => viewPreset(p)}
+                    onClick={() => viewPlan(p)}
                   />
                 ))}
               </div>
@@ -264,7 +346,14 @@ export default function EdgePage() {
               uploadImage={uploadImage}
             />
           ) : selected ? (
-            <PlanDetail plan={selected} />
+            <PlanDetail
+              plan={selected}
+              onEdit={() => openEdit(selected)}
+              onDelete={() => handleDelete(selected)}
+              onDuplicate={() => handleDuplicate(selected)}
+              onToggleActive={(active) => handleSetActive(selected, active)}
+              onUsePreset={() => handleDuplicate(selected, true)}
+            />
           ) : (
             <MyPlansEmpty loading={loading} onCreate={startNew} />
           )}
@@ -303,35 +392,120 @@ function MyPlansEmpty({
   );
 }
 
+type RowMenu = {
+  isActive: boolean;
+  onSetActive: () => void;
+  onDuplicate: () => void;
+  onDelete: () => void;
+};
+
 function PlanRow({
   plan,
   active,
   onClick,
+  menu,
 }: {
   plan: { id: string; name: string; plan_type: string | null; dot_color: string };
   active: boolean;
   onClick: () => void;
+  menu?: RowMenu;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div
+      className={`group relative rounded-xl transition ${
+        active ? "bg-brand-soft" : "hover:bg-gray-50"
+      }`}
+    >
+      <button onClick={onClick} className="w-full px-3 py-2.5 pr-9 text-left">
+        <div className="flex items-center gap-2">
+          <span className={`h-2 w-2 shrink-0 rounded-full ${dotClass[plan.dot_color]}`} />
+          <span
+            className={`truncate text-sm font-semibold ${
+              active ? "text-brand" : "text-gray-800"
+            }`}
+          >
+            {plan.name}
+          </span>
+        </div>
+        {plan.plan_type && (
+          <div className="mt-0.5 truncate pl-4 text-xs text-gray-400">{plan.plan_type}</div>
+        )}
+      </button>
+
+      {menu && (
+        <>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setOpen((o) => !o);
+            }}
+            className="absolute right-1.5 top-2 rounded-md p-1 text-gray-400 opacity-0 transition hover:bg-black/5 hover:text-gray-700 group-hover:opacity-100 aria-expanded:opacity-100"
+            aria-expanded={open}
+          >
+            <MoreVertical size={16} />
+          </button>
+          {open && (
+            <>
+              <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+              <div className="absolute right-1.5 top-9 z-20 w-44 overflow-hidden rounded-lg border border-gray-100 bg-white py-1 shadow-lg">
+                <MenuItem
+                  icon={CheckCircle2}
+                  onClick={() => {
+                    menu.onSetActive();
+                    setOpen(false);
+                  }}
+                >
+                  {menu.isActive ? "Set as Inactive" : "Set as Active"}
+                </MenuItem>
+                <MenuItem
+                  icon={Copy}
+                  onClick={() => {
+                    menu.onDuplicate();
+                    setOpen(false);
+                  }}
+                >
+                  Duplicate
+                </MenuItem>
+                <MenuItem
+                  icon={Trash2}
+                  danger
+                  onClick={() => {
+                    menu.onDelete();
+                    setOpen(false);
+                  }}
+                >
+                  Delete
+                </MenuItem>
+              </div>
+            </>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function MenuItem({
+  icon: Icon,
+  children,
+  onClick,
+  danger,
+}: {
+  icon: React.ElementType;
+  children: React.ReactNode;
+  onClick: () => void;
+  danger?: boolean;
 }) {
   return (
     <button
       onClick={onClick}
-      className={`w-full rounded-xl px-3 py-2.5 text-left transition ${
-        active ? "bg-brand-soft" : "hover:bg-gray-50"
+      className={`flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm transition hover:bg-gray-50 ${
+        danger ? "text-red-500" : "text-gray-700"
       }`}
     >
-      <div className="flex items-center gap-2">
-        <span className={`h-2 w-2 shrink-0 rounded-full ${dotClass[plan.dot_color]}`} />
-        <span
-          className={`truncate text-sm font-semibold ${
-            active ? "text-brand" : "text-gray-800"
-          }`}
-        >
-          {plan.name}
-        </span>
-      </div>
-      {plan.plan_type && (
-        <div className="mt-0.5 truncate pl-4 text-xs text-gray-400">{plan.plan_type}</div>
-      )}
+      <Icon size={15} /> {children}
     </button>
   );
 }

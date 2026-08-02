@@ -10,6 +10,9 @@ import {
   PencilLine,
   Info,
   Pencil,
+  Trash2,
+  Copy,
+  Clock,
 } from "lucide-react";
 import { Plan } from "@/lib/types";
 
@@ -39,7 +42,21 @@ function SectionLabel({
   );
 }
 
-export default function PlanDetail({ plan }: { plan: Plan }) {
+export default function PlanDetail({
+  plan,
+  onEdit,
+  onDelete,
+  onDuplicate,
+  onToggleActive,
+  onUsePreset,
+}: {
+  plan: Plan;
+  onEdit?: () => void;
+  onDelete?: () => void;
+  onDuplicate?: () => void;
+  onToggleActive?: (active: boolean) => void;
+  onUsePreset?: () => void;
+}) {
   // Entry-criteria ticks are a working checklist — local, not persisted.
   const [checks, setChecks] = useState<boolean[]>([]);
   useEffect(() => {
@@ -52,6 +69,11 @@ export default function PlanDetail({ plan }: { plan: Plan }) {
     plan.max_daily_profit !== null ||
     plan.risk_per_trade !== null;
 
+  const hasWindow =
+    !!plan.trading_window_start ||
+    !!plan.trading_window_end ||
+    !!plan.block_news_note;
+
   return (
     <div className="rounded-2xl border border-black/5 bg-white p-8 shadow-sm">
       {/* Header */}
@@ -60,12 +82,63 @@ export default function PlanDetail({ plan }: { plan: Plan }) {
           <span className={`h-2.5 w-2.5 rounded-full ${dotClass[plan.dot_color]}`} />
           <h2 className="text-2xl font-bold text-gray-900">{plan.name}</h2>
         </div>
-        {plan.is_preset && (
-          <button className="shrink-0 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:brightness-105">
+
+        {plan.is_preset ? (
+          <button
+            onClick={onUsePreset}
+            className="shrink-0 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:brightness-105"
+          >
             Use this Preset
           </button>
+        ) : (
+          <div className="flex shrink-0 items-center gap-2">
+            <button
+              onClick={onDelete}
+              title="Delete"
+              className="rounded-lg border border-gray-200 p-2 text-gray-500 transition hover:border-red-200 hover:bg-red-50 hover:text-red-500"
+            >
+              <Trash2 size={16} />
+            </button>
+            <button
+              onClick={onDuplicate}
+              title="Duplicate"
+              className="rounded-lg border border-gray-200 p-2 text-gray-500 transition hover:bg-gray-50"
+            >
+              <Copy size={16} />
+            </button>
+            <button
+              onClick={onEdit}
+              className="flex items-center gap-2 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:brightness-105"
+            >
+              <Pencil size={15} /> Edit
+            </button>
+          </div>
         )}
       </div>
+
+      {/* Active toggle (My Plans only) */}
+      {!plan.is_preset && (
+        <div className="mt-5 flex items-center gap-3 rounded-xl bg-brand-soft/60 px-4 py-3">
+          <button
+            role="switch"
+            aria-checked={plan.is_active}
+            onClick={() => onToggleActive?.(!plan.is_active)}
+            className={`relative h-6 w-11 shrink-0 rounded-full transition ${
+              plan.is_active ? "bg-brand" : "bg-gray-300"
+            }`}
+          >
+            <span
+              className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition ${
+                plan.is_active ? "left-[22px]" : "left-0.5"
+              }`}
+            />
+          </button>
+          <span className="text-sm font-semibold text-gray-800">
+            {plan.is_active ? "Active" : "Inactive"}
+          </span>
+          <Info size={14} className="text-gray-400" />
+        </div>
+      )}
 
       {/* Plan Type + Risk Controls */}
       <div className="mt-6 flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
@@ -76,34 +149,56 @@ export default function PlanDetail({ plan }: { plan: Plan }) {
           </div>
         </div>
 
-        {hasRisk && (
-          <div className="w-full rounded-xl border border-rose-100 bg-rose-50/60 p-5 lg:w-80">
-            <div className="mb-4 flex items-center justify-between">
-              <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500">
-                Risk Controls
-                <Info size={13} className="text-gray-400" />
+        {(hasRisk || hasWindow) && (
+          <div className="w-full space-y-5 lg:w-72">
+            {hasRisk && (
+              <div className="rounded-xl border border-rose-100 bg-rose-50/60 p-5">
+                <div className="mb-4 flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500">
+                    Risk Controls
+                    <Info size={13} className="text-gray-400" />
+                  </div>
+                  <Pencil size={14} className="cursor-pointer text-gray-400 hover:text-gray-600" />
+                </div>
+                <div className="grid grid-cols-2 gap-y-4 gap-x-6">
+                  <Metric value={fmt(plan.max_trades_per_day)} label="Max trades per day" />
+                  <Metric
+                    value={fmt(plan.max_daily_loss, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    label="Max daily loss"
+                  />
+                  <Metric
+                    value={fmt(plan.max_daily_profit, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    label="Max daily profit"
+                  />
+                  <Metric
+                    value={
+                      plan.risk_per_trade === null
+                        ? "—"
+                        : `${plan.risk_per_trade.toFixed(2)}%`
+                    }
+                    label="Risk per trade"
+                  />
+                </div>
               </div>
-              <Pencil size={14} className="cursor-pointer text-gray-400 hover:text-gray-600" />
-            </div>
-            <div className="grid grid-cols-2 gap-y-4 gap-x-6">
-              <Metric value={fmt(plan.max_trades_per_day)} label="Max trades per day" />
-              <Metric
-                value={fmt(plan.max_daily_loss, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                label="Max daily loss"
-              />
-              <Metric
-                value={fmt(plan.max_daily_profit, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                label="Max daily profit"
-              />
-              <Metric
-                value={
-                  plan.risk_per_trade === null
-                    ? "—"
-                    : `${plan.risk_per_trade.toFixed(2)}%`
-                }
-                label="Risk per trade"
-              />
-            </div>
+            )}
+
+            {hasWindow && (
+              <div className="rounded-xl border border-gray-100 bg-white p-5 shadow-sm">
+                <div className="mb-3 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500">
+                  <Clock size={13} className="text-gray-400" />
+                  Trading Window
+                </div>
+                <div className="text-xl font-bold text-gray-900">
+                  {plan.trading_window_start ?? "—"} - {plan.trading_window_end ?? "—"}
+                </div>
+                {plan.block_news_note && (
+                  <>
+                    <div className="mt-3 text-sm text-gray-500">Block News</div>
+                    <p className="mt-1 text-sm text-gray-700">{plan.block_news_note}</p>
+                  </>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>
