@@ -1,0 +1,72 @@
+import { Plan } from "./types";
+
+/**
+ * Preset plans shown before the Supabase `plans` table is populated.
+ * These mirror the seed rows in supabase/migrations/0001_plans.sql, so the UI
+ * looks identical whether or not the DB has been set up yet.
+ */
+export const SAMPLE_PRESETS: Plan[] = [
+  {
+    id: "sample-market-mechanics",
+    name: "Market Mechanics Plan",
+    plan_type: "Failed Reaction LQ Sweep",
+    dot_color: "yellow",
+    is_preset: true,
+    max_trades_per_day: 5,
+    max_daily_loss: 100,
+    max_daily_profit: 1000,
+    risk_per_trade: 1,
+    charting_process: [
+      "Map relevant POIs on 4H",
+      "Identify whether price is in continuation or pullback phase on 15min",
+      "Wait for 15min POI",
+      "Look for Entry Model on 5min",
+    ],
+    entry_criteria: [
+      { label: "Imbalance", checked: false },
+      { label: "Market Shift + LQ Sweep", checked: false },
+      { label: "Breakout Candle", checked: false },
+    ],
+    trade_management_rules: ["Move stop to breakeven after 1R"],
+    exit_criteria: [],
+    trading_notes: null,
+    setup_screenshot_url: null,
+    entry_example_urls: [],
+  },
+  {
+    id: "sample-jasons-strategy",
+    name: "Jason's Strategy",
+    plan_type: "London Checklist",
+    dot_color: "red",
+    is_preset: true,
+    max_trades_per_day: null,
+    max_daily_loss: null,
+    max_daily_profit: null,
+    risk_per_trade: null,
+    charting_process: [],
+    entry_criteria: [],
+    trade_management_rules: [],
+    exit_criteria: [],
+    trading_notes: null,
+    setup_screenshot_url: null,
+    entry_example_urls: [],
+  },
+  {
+    id: "sample-weekly-range",
+    name: "Weekly Range",
+    plan_type: "Aiming to capture the range of the weekly candle",
+    dot_color: "red",
+    is_preset: true,
+    max_trades_per_day: null,
+    max_daily_loss: null,
+    max_daily_profit: null,
+    risk_per_trade: null,
+    charting_process: [],
+    entry_criteria: [],
+    trade_management_rules: [],
+    exit_criteria: [],
+    trading_notes: null,
+    setup_screenshot_url: null,
+    entry_example_urls: [],
+  },
+];
