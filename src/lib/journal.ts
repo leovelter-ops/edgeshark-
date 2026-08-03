@@ -8,6 +8,7 @@
 // ---------------------------------------------------------------------------
 
 import { createClient } from "@/lib/supabase/client";
+import { fetchUserSettings, patchUserSettings } from "@/lib/userSettings";
 
 export const JOURNAL_KEY = "edgeflo_journal_trades";
 export const JOURNAL_EVENT = "edgeflo-journal-change";
@@ -167,44 +168,19 @@ function cacheBalance(n: number): void {
 
 /** Read the starting balance from Supabase, refresh cache, notify listeners. */
 export async function fetchStartingBalance(): Promise<number> {
-  try {
-    const { data, error } = await db()
-      .from("user_settings")
-      .select("starting_balance")
-      .limit(1)
-      .maybeSingle();
-    if (error) throw error;
-    const n = data ? Number(data.starting_balance) : NaN;
-    if (Number.isFinite(n)) {
-      cacheBalance(n);
-      return n;
-    }
-    return loadStartingBalance();
-  } catch {
-    return loadStartingBalance();
+  const row = await fetchUserSettings();
+  const n = row ? Number(row.starting_balance) : NaN;
+  if (Number.isFinite(n)) {
+    cacheBalance(n);
+    return n;
   }
+  return loadStartingBalance();
 }
 
-/** Persist the starting balance: optimistic cache + event, then upsert row. */
+/** Persist the starting balance: optimistic cache + event, then patch the row. */
 export async function saveStartingBalance(n: number): Promise<void> {
   cacheBalance(n);
-  try {
-    const { data } = await db()
-      .from("user_settings")
-      .select("id")
-      .limit(1)
-      .maybeSingle();
-    if (data?.id) {
-      await db()
-        .from("user_settings")
-        .update({ starting_balance: n })
-        .eq("id", data.id);
-    } else {
-      await db().from("user_settings").insert({ starting_balance: n });
-    }
-  } catch {
-    /* stays in cache */
-  }
+  await patchUserSettings({ starting_balance: n });
 }
 
 export function isWin(t: JournalTrade): boolean {

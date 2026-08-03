@@ -1,7 +1,16 @@
 // ---------------------------------------------------------------------------
-// Settings: Account, Pre-Market Routine, and Trading Preferences. Persisted in
-// localStorage (no dedicated Supabase table yet).
+// Settings: Account, Pre-Market Routine, and Trading Preferences. Backed by the
+// single public.user_settings row (see src/lib/userSettings.ts), with
+// localStorage as a write-through cache + offline fallback — same model as the
+// journal store.
 // ---------------------------------------------------------------------------
+
+import { PINS_KEY, PREMARKET_KEY } from "./trading";
+import {
+  fetchUserSettings,
+  patchUserSettings,
+  UserSettingsRow,
+} from "./userSettings";
 
 export const ACCOUNT_KEY = "edgeflo_settings_account";
 export const ROUTINE_KEY = "edgeflo_settings_routine";
@@ -200,7 +209,7 @@ export const RECOMMENDED_GUARDRAILS = {
   newsMins: 15,
 };
 
-// ---- storage helper --------------------------------------------------------
+// ---- storage helper (localStorage cache) -----------------------------------
 
 export function loadSetting<T>(key: string, fallback: T): T {
   if (typeof window === "undefined") return fallback;
@@ -211,5 +220,65 @@ export function loadSetting<T>(key: string, fallback: T): T {
     return { ...fallback, ...JSON.parse(raw) };
   } catch {
     return fallback;
+  }
+}
+
+/** Raw cache read for non-object settings (pins array, premarket record). */
+export function loadRaw<T>(key: string, fallback: T): T {
+  if (typeof window === "undefined") return fallback;
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+// ---- Supabase-backed settings store ----------------------------------------
+// Each localStorage key maps to a jsonb column on public.user_settings. Writes
+// update the cache + fire SETTINGS_EVENT, then persist to Supabase; hydrate
+// pulls the row on load and refreshes the cache.
+
+export const SETTINGS_EVENT = "edgeflo-settings-change";
+
+export interface SettingsChange {
+  key: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  value: any;
+}
+
+const KEY_TO_COLUMN: Record<string, keyof Omit<UserSettingsRow, "id">> = {
+  [ACCOUNT_KEY]: "account",
+  [ROUTINE_KEY]: "routine",
+  [TRADING_KEY]: "trading",
+  [PREMARKET_KEY]: "premarket",
+  [PINS_KEY]: "pins",
+};
+
+function cacheAndAnnounce(key: string, value: unknown): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    /* ignore */
+  }
+  window.dispatchEvent(
+    new CustomEvent<SettingsChange>(SETTINGS_EVENT, { detail: { key, value } }),
+  );
+}
+
+/** Persist a setting: optimistic cache + event, then patch the user_settings row. */
+export async function saveSetting(key: string, value: unknown): Promise<void> {
+  cacheAndAnnounce(key, value);
+  const column = KEY_TO_COLUMN[key];
+  if (column) await patchUserSettings({ [column]: value });
+}
+
+/** Pull the settings row from Supabase and refresh every cached blob. */
+export async function hydrateSettings(): Promise<void> {
+  const row = await fetchUserSettings();
+  if (!row) return;
+  for (const [key, column] of Object.entries(KEY_TO_COLUMN)) {
+    const value = row[column];
+    if (value !== undefined && value !== null) cacheAndAnnounce(key, value);
   }
 }

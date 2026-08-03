@@ -42,6 +42,10 @@ import {
   NEWS_MINS,
   RECOMMENDED_GUARDRAILS,
   loadSetting,
+  saveSetting,
+  hydrateSettings,
+  SETTINGS_EVENT,
+  SettingsChange,
 } from "@/lib/settings";
 import { fileToScaledDataUrl } from "@/lib/academy";
 import { applyTheme, getTheme, THEME_EVENT, Theme } from "@/lib/theme";
@@ -95,6 +99,12 @@ function AccountTab() {
   const [saved, setSaved] = useState<AccountSettings>(DEFAULT_ACCOUNT);
   const [draft, setDraft] = useState<AccountSettings>(DEFAULT_ACCOUNT);
   const [editing, setEditing] = useState(false);
+  // Track edit mode in a ref so the settings-change listener (registered once)
+  // can avoid overwriting an in-progress edit.
+  const editingRef = useRef(editing);
+  useEffect(() => {
+    editingRef.current = editing;
+  });
   // The live applied theme, shared with the sidebar toggle via @/lib/theme.
   const [appliedTheme, setAppliedTheme] = useState<Theme>("light");
   const fileRef = useRef<HTMLInputElement>(null);
@@ -117,7 +127,21 @@ function AccountTab() {
       setDraft((prev) => ({ ...prev, theme: t }));
     };
     window.addEventListener(THEME_EVENT, onThemeChange);
-    return () => window.removeEventListener(THEME_EVENT, onThemeChange);
+
+    // Hydrate from Supabase, then reflect account changes from other tabs/pages.
+    hydrateSettings();
+    const onSettings = (e: Event) => {
+      const { key, value } = (e as CustomEvent<SettingsChange>).detail;
+      if (key !== ACCOUNT_KEY) return;
+      const merged = { ...DEFAULT_ACCOUNT, ...value, theme: getTheme() };
+      setSaved(merged);
+      setDraft((prev) => (editingRef.current ? prev : merged));
+    };
+    window.addEventListener(SETTINGS_EVENT, onSettings);
+    return () => {
+      window.removeEventListener(THEME_EVENT, onThemeChange);
+      window.removeEventListener(SETTINGS_EVENT, onSettings);
+    };
   }, []);
 
   // Theme applies immediately (like the avatar) regardless of edit mode, and
@@ -127,7 +151,7 @@ function AccountTab() {
     setAppliedTheme(t);
     setSaved((prev) => {
       const next = { ...prev, theme: t };
-      localStorage.setItem(ACCOUNT_KEY, JSON.stringify(next));
+      saveSetting(ACCOUNT_KEY, next);
       return next;
     });
     setDraft((prev) => ({ ...prev, theme: t }));
@@ -136,7 +160,7 @@ function AccountTab() {
   const commit = (next: AccountSettings) => {
     setSaved(next);
     setDraft(next);
-    localStorage.setItem(ACCOUNT_KEY, JSON.stringify(next));
+    saveSetting(ACCOUNT_KEY, next);
   };
 
   const set = <K extends keyof AccountSettings>(k: K, v: AccountSettings[K]) =>
@@ -315,12 +339,32 @@ function RoutineTab() {
   const [draft, setDraft] = useState<RoutineSettings>(DEFAULT_ROUTINE);
   const [saved, setSaved] = useState<RoutineSettings>(DEFAULT_ROUTINE);
   const dragIndex = useRef<number | null>(null);
+  const savedRef = useRef(saved);
+  const draftRef = useRef(draft);
+  useEffect(() => {
+    savedRef.current = saved;
+    draftRef.current = draft;
+  });
 
   useEffect(() => {
     const s = loadSetting(ROUTINE_KEY, DEFAULT_ROUTINE);
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setSaved(s);
     setDraft(s);
+    hydrateSettings();
+    // Reflect routine changes hydrated/saved elsewhere — but never clobber an
+    // in-progress edit.
+    const onSettings = (e: Event) => {
+      const { key, value } = (e as CustomEvent<SettingsChange>).detail;
+      if (key !== ROUTINE_KEY) return;
+      const merged = { ...DEFAULT_ROUTINE, ...value };
+      const clean =
+        JSON.stringify(draftRef.current) === JSON.stringify(savedRef.current);
+      setSaved(merged);
+      if (clean) setDraft(merged);
+    };
+    window.addEventListener(SETTINGS_EVENT, onSettings);
+    return () => window.removeEventListener(SETTINGS_EVENT, onSettings);
   }, []);
 
   const set = <K extends keyof RoutineSettings>(k: K, v: RoutineSettings[K]) =>
@@ -353,7 +397,7 @@ function RoutineTab() {
 
   const save = () => {
     setSaved(draft);
-    localStorage.setItem(ROUTINE_KEY, JSON.stringify(draft));
+    saveSetting(ROUTINE_KEY, draft);
   };
 
   return (
@@ -492,12 +536,30 @@ function RoutineTab() {
 function TradingTab() {
   const [draft, setDraft] = useState<TradingPrefs>(DEFAULT_TRADING);
   const [saved, setSaved] = useState<TradingPrefs>(DEFAULT_TRADING);
+  const savedRef = useRef(saved);
+  const draftRef = useRef(draft);
+  useEffect(() => {
+    savedRef.current = saved;
+    draftRef.current = draft;
+  });
 
   useEffect(() => {
     const s = loadSetting(TRADING_KEY, DEFAULT_TRADING);
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setSaved(s);
     setDraft(s);
+    hydrateSettings();
+    const onSettings = (e: Event) => {
+      const { key, value } = (e as CustomEvent<SettingsChange>).detail;
+      if (key !== TRADING_KEY) return;
+      const merged = { ...DEFAULT_TRADING, ...value };
+      const clean =
+        JSON.stringify(draftRef.current) === JSON.stringify(savedRef.current);
+      setSaved(merged);
+      if (clean) setDraft(merged);
+    };
+    window.addEventListener(SETTINGS_EVENT, onSettings);
+    return () => window.removeEventListener(SETTINGS_EVENT, onSettings);
   }, []);
 
   const set = <K extends keyof TradingPrefs>(k: K, v: TradingPrefs[K]) =>
@@ -505,7 +567,7 @@ function TradingTab() {
 
   const save = () => {
     setSaved(draft);
-    localStorage.setItem(TRADING_KEY, JSON.stringify(draft));
+    saveSetting(TRADING_KEY, draft);
   };
 
   return (

@@ -52,6 +52,11 @@ import {
   RoutineStep,
   routineDayKey,
   loadSetting,
+  loadRaw,
+  saveSetting,
+  hydrateSettings,
+  SETTINGS_EVENT,
+  SettingsChange,
 } from "@/lib/settings";
 import {
   JournalTrade,
@@ -77,29 +82,40 @@ export default function TradingPage() {
   const [selected, setSelected] = useState<Instrument>(INSTRUMENTS[0]);
   const [trades, setTrades] = useState<JournalTrade[]>([]);
   const [balance, setBalance] = useState<number>(0);
+  const [prefs, setPrefs] = useState(DEFAULT_TRADING);
+  const [routine, setRoutine] = useState(DEFAULT_ROUTINE);
+  const [account, setAccount] = useState(DEFAULT_ACCOUNT);
 
-  const prefs = useMemo(() => loadSetting(TRADING_KEY, DEFAULT_TRADING), []);
-  const routine = useMemo(() => loadSetting(ROUTINE_KEY, DEFAULT_ROUTINE), []);
-  const account = useMemo(() => loadSetting(ACCOUNT_KEY, DEFAULT_ACCOUNT), []);
-
-  // Load logged trades + starting balance, and stay in sync when either changes
-  // (here or on the Journal page).
+  // Instant paint from cache, then reconcile from Supabase. All updates arrive
+  // via change events (here, the Journal page, or the Settings page).
   useEffect(() => {
-    // Instant paint from cache, then reconcile from Supabase (events set state).
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setTrades(loadTrades());
     setBalance(loadStartingBalance());
+    setPrefs(loadSetting(TRADING_KEY, DEFAULT_TRADING));
+    setRoutine(loadSetting(ROUTINE_KEY, DEFAULT_ROUTINE));
+    setAccount(loadSetting(ACCOUNT_KEY, DEFAULT_ACCOUNT));
     fetchTrades();
     fetchStartingBalance();
+    hydrateSettings();
+
     const onTrades = (e: Event) =>
       setTrades((e as CustomEvent<JournalTrade[]>).detail);
     const onBalance = (e: Event) =>
       setBalance((e as CustomEvent<number>).detail);
+    const onSettings = (e: Event) => {
+      const { key, value } = (e as CustomEvent<SettingsChange>).detail;
+      if (key === TRADING_KEY) setPrefs({ ...DEFAULT_TRADING, ...value });
+      else if (key === ROUTINE_KEY) setRoutine({ ...DEFAULT_ROUTINE, ...value });
+      else if (key === ACCOUNT_KEY) setAccount({ ...DEFAULT_ACCOUNT, ...value });
+    };
     window.addEventListener(JOURNAL_EVENT, onTrades);
     window.addEventListener(BALANCE_EVENT, onBalance);
+    window.addEventListener(SETTINGS_EVENT, onSettings);
     return () => {
       window.removeEventListener(JOURNAL_EVENT, onTrades);
       window.removeEventListener(BALANCE_EVENT, onBalance);
+      window.removeEventListener(SETTINGS_EVENT, onSettings);
     };
   }, []);
 
@@ -320,23 +336,23 @@ function PreMarketBanner({
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
-    try {
-      const raw = JSON.parse(localStorage.getItem(PREMARKET_KEY) || "{}");
-      // eslint-disable-next-line react-hooks/set-state-in-effect
+    const apply = (raw: { day?: string; completed?: unknown }) =>
       setCompleted(
-        raw.day === dayKey && Array.isArray(raw.completed) ? raw.completed : [],
+        raw?.day === dayKey && Array.isArray(raw.completed) ? raw.completed : [],
       );
-    } catch {
-      /* ignore */
-    }
+    apply(loadRaw(PREMARKET_KEY, {} as { day?: string; completed?: string[] }));
+    // Reflect progress hydrated from Supabase for the same routine period.
+    const onSettings = (e: Event) => {
+      const { key, value } = (e as CustomEvent<SettingsChange>).detail;
+      if (key === PREMARKET_KEY) apply(value ?? {});
+    };
+    window.addEventListener(SETTINGS_EVENT, onSettings);
+    return () => window.removeEventListener(SETTINGS_EVENT, onSettings);
   }, [dayKey]);
 
   const persist = (next: string[]) => {
     setCompleted(next);
-    localStorage.setItem(
-      PREMARKET_KEY,
-      JSON.stringify({ day: dayKey, completed: next }),
-    );
+    saveSetting(PREMARKET_KEY, { day: dayKey, completed: next });
   };
   const toggle = (id: string) =>
     persist(
@@ -817,24 +833,29 @@ function Watchlist({
   const [activePlan, setActivePlanState] = useState<Plan | null>(null);
 
   useEffect(() => {
-    try {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setPins(JSON.parse(localStorage.getItem(PINS_KEY) || '["EURUSD"]'));
-    } catch {
-      /* ignore */
-    }
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setPins(loadRaw<string[]>(PINS_KEY, ["EURUSD"]));
     setActivePlanState(getActivePlan());
     // Keep in sync when the active plan changes on the Edge page.
     const onActiveChange = (e: Event) =>
       setActivePlanState((e as CustomEvent<Plan | null>).detail);
+    // Reflect pins hydrated/changed from Supabase.
+    const onSettings = (e: Event) => {
+      const { key, value } = (e as CustomEvent<SettingsChange>).detail;
+      if (key === PINS_KEY && Array.isArray(value)) setPins(value);
+    };
     window.addEventListener(ACTIVE_PLAN_EVENT, onActiveChange);
-    return () => window.removeEventListener(ACTIVE_PLAN_EVENT, onActiveChange);
+    window.addEventListener(SETTINGS_EVENT, onSettings);
+    return () => {
+      window.removeEventListener(ACTIVE_PLAN_EVENT, onActiveChange);
+      window.removeEventListener(SETTINGS_EVENT, onSettings);
+    };
   }, []);
 
   const togglePin = (sym: string) => {
     const next = pins.includes(sym) ? pins.filter((s) => s !== sym) : [...pins, sym];
     setPins(next);
-    localStorage.setItem(PINS_KEY, JSON.stringify(next));
+    saveSetting(PINS_KEY, next);
   };
 
   const list = INSTRUMENTS.filter(
