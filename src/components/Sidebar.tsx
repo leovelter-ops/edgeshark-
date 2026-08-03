@@ -50,6 +50,7 @@ export default function Sidebar() {
 
   // Sync UI state from storage / the DOM after mount (avoids a hydration gap).
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setDark(getTheme() === "dark");
     try {
       setExpanded(localStorage.getItem(EXPANDED_KEY) === "1");
@@ -105,7 +106,7 @@ export default function Sidebar() {
           // eslint-disable-next-line @next/next/no-img-element
           <img
             ref={logoRef}
-            src="/edge-logo.png"
+            src="/images/logo.jpg"
             alt="EdgeFlo"
             className="h-10 w-10 shrink-0 rounded-xl object-contain"
             onError={() => setLogoOk(false)}
