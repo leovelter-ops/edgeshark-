@@ -58,7 +58,9 @@ import {
   JOURNAL_EVENT,
   BALANCE_EVENT,
   loadTrades,
+  fetchTrades,
   loadStartingBalance,
+  fetchStartingBalance,
   saveStartingBalance,
   addTrade,
   deleteTrade,
@@ -83,9 +85,12 @@ export default function TradingPage() {
   // Load logged trades + starting balance, and stay in sync when either changes
   // (here or on the Journal page).
   useEffect(() => {
+    // Instant paint from cache, then reconcile from Supabase (events set state).
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setTrades(loadTrades());
     setBalance(loadStartingBalance());
+    fetchTrades();
+    fetchStartingBalance();
     const onTrades = (e: Event) =>
       setTrades((e as CustomEvent<JournalTrade[]>).detail);
     const onBalance = (e: Event) =>
@@ -103,16 +108,18 @@ export default function TradingPage() {
   // Running equity = the balance you set + all realized PnL you've logged.
   const equity = balance + sumPnl(trades);
 
+  // Mutations are optimistic: the store updates the cache + fires an event
+  // (which sets state here) and persists to Supabase in the background.
   const saveBalance = (n: number) => {
-    setBalance(n);
     saveStartingBalance(n);
   };
-
   const logTrade = (t: JournalTrade) => {
-    setTrades(addTrade(t));
+    addTrade(t);
     setLogOpen(false);
   };
-  const removeTrade = (id: string) => setTrades(deleteTrade(id));
+  const removeTrade = (id: string) => {
+    deleteTrade(id);
+  };
 
   return (
     <div className="min-h-screen px-6 py-6">
@@ -1074,7 +1081,7 @@ function LogTradeModal({
     if (!pnlValid) return;
     const ts = when ? new Date(when).getTime() : Date.now();
     onLog({
-      id: `t-${Date.now()}`,
+      id: crypto.randomUUID(),
       symbol: inst.symbol,
       flag: inst.flag,
       direction,

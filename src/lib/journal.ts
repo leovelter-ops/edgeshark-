@@ -1,9 +1,13 @@
 // ---------------------------------------------------------------------------
-// Journal trade store. Trades are logged manually from the Trading page and
-// persisted in localStorage (no dedicated Supabase table yet), so the Journal
-// calendar and the Trading risk panel read the same data. A custom event keeps
-// open pages in sync within the tab.
+// Journal trade store. Trades and the starting balance live in Supabase
+// (public.trades, public.user_settings — see supabase/migrations/0005,0006).
+// localStorage is a write-through cache so reads are instant and the app keeps
+// working offline / before the tables exist. A custom event keeps open pages in
+// sync within the tab; every mutation writes the cache + dispatches the event
+// optimistically, then persists to Supabase in the background.
 // ---------------------------------------------------------------------------
+
+import { createClient } from "@/lib/supabase/client";
 
 export const JOURNAL_KEY = "edgeflo_journal_trades";
 export const JOURNAL_EVENT = "edgeflo-journal-change";
@@ -14,25 +18,10 @@ export const BALANCE_KEY = "edgeflo_starting_balance";
 export const BALANCE_EVENT = "edgeflo-balance-change";
 export const DEFAULT_BALANCE = 10000;
 
-export function loadStartingBalance(): number {
-  if (typeof window === "undefined") return DEFAULT_BALANCE;
-  try {
-    const raw = localStorage.getItem(BALANCE_KEY);
-    const n = raw === null ? NaN : Number(raw);
-    return Number.isFinite(n) && n >= 0 ? n : DEFAULT_BALANCE;
-  } catch {
-    return DEFAULT_BALANCE;
-  }
-}
-
-/** Persist the starting balance and notify listeners. */
-export function saveStartingBalance(n: number): void {
-  try {
-    localStorage.setItem(BALANCE_KEY, String(n));
-  } catch {
-    /* ignore */
-  }
-  window.dispatchEvent(new CustomEvent<number>(BALANCE_EVENT, { detail: n }));
+// Lazily-created browser Supabase client (shared singleton).
+let _db: ReturnType<typeof createClient> | null = null;
+function db() {
+  return (_db ??= createClient());
 }
 
 export interface JournalTrade {
@@ -48,6 +37,54 @@ export interface JournalTrade {
   ts: number; // execution time (epoch ms)
 }
 
+// ---- row <-> app mappers --------------------------------------------------
+
+interface TradeRow {
+  id: string;
+  symbol: string;
+  flag: string | null;
+  direction: "Buy" | "Sell";
+  net_pnl: number | string;
+  r_multiple: number | string;
+  emotion: string | null;
+  note: string | null;
+  plan_followed: boolean;
+  executed_at: string;
+}
+
+function rowToTrade(r: TradeRow): JournalTrade {
+  return {
+    id: r.id,
+    symbol: r.symbol,
+    flag: r.flag ?? "",
+    direction: r.direction,
+    netPnl: Number(r.net_pnl),
+    rMultiple: Number(r.r_multiple),
+    emotion: r.emotion ?? "",
+    note: r.note ?? "",
+    planFollowed: r.plan_followed,
+    ts: new Date(r.executed_at).getTime(),
+  };
+}
+
+function tradeToRow(t: JournalTrade) {
+  return {
+    id: t.id,
+    symbol: t.symbol,
+    flag: t.flag,
+    direction: t.direction,
+    net_pnl: t.netPnl,
+    r_multiple: t.rMultiple,
+    emotion: t.emotion,
+    note: t.note,
+    plan_followed: t.planFollowed,
+    executed_at: new Date(t.ts).toISOString(),
+  };
+}
+
+// ---- trades ---------------------------------------------------------------
+
+/** Synchronous cache read (localStorage) for instant first paint. */
 export function loadTrades(): JournalTrade[] {
   if (typeof window === "undefined") return [];
   try {
@@ -58,7 +95,7 @@ export function loadTrades(): JournalTrade[] {
   }
 }
 
-function persist(next: JournalTrade[]): void {
+function cacheTrades(next: JournalTrade[]): void {
   try {
     localStorage.setItem(JOURNAL_KEY, JSON.stringify(next));
   } catch {
@@ -69,18 +106,105 @@ function persist(next: JournalTrade[]): void {
   );
 }
 
-/** Append a trade and notify listeners. Returns the new list. */
-export function addTrade(t: JournalTrade): JournalTrade[] {
-  const next = [...loadTrades(), t];
-  persist(next);
-  return next;
+/** Pull trades from Supabase, refresh the cache, and notify listeners. */
+export async function fetchTrades(): Promise<JournalTrade[]> {
+  try {
+    const { data, error } = await db()
+      .from("trades")
+      .select("*")
+      .order("executed_at", { ascending: false });
+    if (error) throw error;
+    const trades = (data as TradeRow[]).map(rowToTrade);
+    cacheTrades(trades);
+    return trades;
+  } catch {
+    // Table missing or offline — keep whatever is cached.
+    return loadTrades();
+  }
 }
 
-/** Remove a trade by id and notify listeners. Returns the new list. */
-export function deleteTrade(id: string): JournalTrade[] {
-  const next = loadTrades().filter((t) => t.id !== id);
-  persist(next);
-  return next;
+/** Append a trade: optimistic cache + event, then persist to Supabase. */
+export async function addTrade(t: JournalTrade): Promise<void> {
+  cacheTrades([...loadTrades(), t]);
+  try {
+    await db().from("trades").insert(tradeToRow(t));
+  } catch {
+    /* stays in cache; will reconcile on next fetchTrades */
+  }
+}
+
+/** Remove a trade: optimistic cache + event, then delete in Supabase. */
+export async function deleteTrade(id: string): Promise<void> {
+  cacheTrades(loadTrades().filter((t) => t.id !== id));
+  try {
+    await db().from("trades").delete().eq("id", id);
+  } catch {
+    /* ignore */
+  }
+}
+
+// ---- starting balance (public.user_settings, single row for now) ----------
+
+export function loadStartingBalance(): number {
+  if (typeof window === "undefined") return DEFAULT_BALANCE;
+  try {
+    const raw = localStorage.getItem(BALANCE_KEY);
+    const n = raw === null ? NaN : Number(raw);
+    return Number.isFinite(n) && n >= 0 ? n : DEFAULT_BALANCE;
+  } catch {
+    return DEFAULT_BALANCE;
+  }
+}
+
+function cacheBalance(n: number): void {
+  try {
+    localStorage.setItem(BALANCE_KEY, String(n));
+  } catch {
+    /* ignore */
+  }
+  window.dispatchEvent(new CustomEvent<number>(BALANCE_EVENT, { detail: n }));
+}
+
+/** Read the starting balance from Supabase, refresh cache, notify listeners. */
+export async function fetchStartingBalance(): Promise<number> {
+  try {
+    const { data, error } = await db()
+      .from("user_settings")
+      .select("starting_balance")
+      .limit(1)
+      .maybeSingle();
+    if (error) throw error;
+    const n = data ? Number(data.starting_balance) : NaN;
+    if (Number.isFinite(n)) {
+      cacheBalance(n);
+      return n;
+    }
+    return loadStartingBalance();
+  } catch {
+    return loadStartingBalance();
+  }
+}
+
+/** Persist the starting balance: optimistic cache + event, then upsert row. */
+export async function saveStartingBalance(n: number): Promise<void> {
+  cacheBalance(n);
+  try {
+    const { data } = await db()
+      .from("user_settings")
+      .select("id")
+      .limit(1)
+      .maybeSingle();
+    if (data?.id) {
+      await db()
+        .from("user_settings")
+        .update({ starting_balance: n })
+        .eq("id", data.id);
+    } else {
+      await db().from("user_settings").insert({ starting_balance: n });
+    }
+  } catch {
+    /* stays in cache */
+  }
 }
 
 export function isWin(t: JournalTrade): boolean {

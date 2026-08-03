@@ -19,7 +19,9 @@ import {
   JOURNAL_EVENT,
   BALANCE_EVENT,
   loadTrades,
+  fetchTrades,
   loadStartingBalance,
+  fetchStartingBalance,
   deleteTrade,
   tradesOnDay,
   tradesInMonth,
@@ -55,6 +57,8 @@ export default function JournalPage() {
     setMounted(true);
     setTrades(loadTrades());
     setBalance(loadStartingBalance());
+    fetchTrades();
+    fetchStartingBalance();
     const onTrades = (e: Event) =>
       setTrades((e as CustomEvent<JournalTrade[]>).detail);
     const onBalance = (e: Event) => setBalance((e as CustomEvent<number>).detail);
@@ -128,7 +132,9 @@ export default function JournalPage() {
           pnl={dayPnl}
           unit={unit}
           balance={balance}
-          onDelete={(id) => setTrades(deleteTrade(id))}
+          onDelete={(id) => {
+            deleteTrade(id);
+          }}
           onPrev={() =>
             setSelected(
               new Date(
