@@ -1,82 +1,87 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   ChevronLeft,
   ChevronRight,
-  ChevronDown,
   Maximize2,
   Plus,
   ChevronsRight,
   Info,
   Check,
   Search,
-  Pencil,
+  Trash2,
 } from "lucide-react";
 import { fmtMoney } from "@/lib/trading";
+import {
+  JournalTrade,
+  JOURNAL_EVENT,
+  BALANCE_EVENT,
+  loadTrades,
+  loadStartingBalance,
+  deleteTrade,
+  tradesOnDay,
+  tradesInMonth,
+  tradesInWeek,
+  sumPnl,
+  isWin,
+} from "@/lib/journal";
 
 // ---------------------------------------------------------------------------
-// Journal — calendar-driven trade journal (demo mode). Everything here is
-// simulated data so the page renders the same for every visitor.
+// Journal — calendar-driven trade journal. Trades are logged from the Trading
+// page (Log Trade) into the shared journal store and rendered here.
 // ---------------------------------------------------------------------------
-
-const ACCOUNT_BALANCE = 100_000;
-
-interface DemoTrade {
-  instrument: string;
-  flag: string;
-  time: string;
-  direction: "Buy" | "Sell";
-  emotions: string;
-  netPnl: number;
-  rMultiple: number;
-  win: boolean;
-}
-
-// The single demo trade lives on "today" so the calendar + detail panel agree.
-const DEMO_TRADES: DemoTrade[] = [
-  {
-    instrument: "EURUSD",
-    flag: "🇪🇺",
-    time: "19:13",
-    direction: "Buy",
-    emotions: "-",
-    netPnl: -1000,
-    rMultiple: -1,
-    win: false,
-  },
-];
 
 type Unit = "$" | "%" | "R";
 
 export default function JournalPage() {
+  const router = useRouter();
   const today = useMemo(() => new Date(), []);
   const [cursor, setCursor] = useState(
     () => new Date(today.getFullYear(), today.getMonth(), 1),
   );
   const [selected, setSelected] = useState(() => new Date(today));
   const [unit, setUnit] = useState<Unit>("$");
+  const [trades, setTrades] = useState<JournalTrade[]>([]);
+  const [balance, setBalance] = useState(0);
 
   // Dates are computed from `new Date()`, which differs between the server and
   // client render — gate the date-driven UI to after mount to avoid a
-  // hydration mismatch.
+  // hydration mismatch. Trades load client-side too.
   const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setMounted(true);
+    setTrades(loadTrades());
+    setBalance(loadStartingBalance());
+    const onTrades = (e: Event) =>
+      setTrades((e as CustomEvent<JournalTrade[]>).detail);
+    const onBalance = (e: Event) => setBalance((e as CustomEvent<number>).detail);
+    window.addEventListener(JOURNAL_EVENT, onTrades);
+    window.addEventListener(BALANCE_EVENT, onBalance);
+    return () => {
+      window.removeEventListener(JOURNAL_EVENT, onTrades);
+      window.removeEventListener(BALANCE_EVENT, onBalance);
+    };
+  }, []);
   if (!mounted) return null;
 
   const isToday = sameDay(selected, today);
-  // Only "today" carries the demo trade.
-  const dayTrades = isToday ? DEMO_TRADES : [];
-  const dayPnl = dayTrades.reduce((s, t) => s + t.netPnl, 0);
+  const dayTrades = tradesOnDay(trades, selected);
+  const dayPnl = sumPnl(dayTrades);
 
   return (
-    <div className="min-h-screen px-6 py-6 pb-24">
+    <div className="min-h-screen px-6 py-6 pb-10">
       {/* Header */}
       <div className="mb-5 flex flex-wrap items-center justify-between gap-4">
         <h1 className="text-3xl font-bold text-gray-900">Journal</h1>
         <div className="flex items-center gap-3">
           <UnitToggle unit={unit} onChange={setUnit} />
-          <button className="flex items-center gap-2 rounded-lg border border-brand/30 bg-brand-soft px-4 py-2 text-sm font-semibold text-brand transition hover:brightness-105">
+          <button
+            onClick={() => router.push("/trading")}
+            className="flex items-center gap-2 rounded-lg border border-brand/30 bg-brand-soft px-4 py-2 text-sm font-semibold text-brand transition hover:brightness-105"
+          >
             <Plus size={16} /> Add Manual Trade
           </button>
           <button className="text-gray-300 hover:text-gray-500">
@@ -92,6 +97,9 @@ export default function JournalPage() {
             cursor={cursor}
             today={today}
             selected={selected}
+            trades={trades}
+            unit={unit}
+            balance={balance}
             onSelect={setSelected}
             onPrev={() =>
               setCursor(new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1))
@@ -105,8 +113,10 @@ export default function JournalPage() {
           />
 
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <MonthlySummary />
-            <WeeklyBreakdown />
+            <MonthlySummary
+              trades={tradesInMonth(trades, cursor.getFullYear(), cursor.getMonth())}
+            />
+            <WeeklyBreakdown trades={tradesInWeek(trades, selected)} />
           </div>
         </div>
 
@@ -117,6 +127,8 @@ export default function JournalPage() {
           trades={dayTrades}
           pnl={dayPnl}
           unit={unit}
+          balance={balance}
+          onDelete={(id) => setTrades(deleteTrade(id))}
           onPrev={() =>
             setSelected(
               new Date(
@@ -138,13 +150,6 @@ export default function JournalPage() {
           onToday={() => setSelected(new Date(today))}
         />
       </div>
-
-      {/* Demo banner */}
-      <div className="pointer-events-none fixed bottom-6 left-1/2 z-20 -translate-x-1/2">
-        <span className="flex items-center gap-1.5 rounded-full bg-brand px-4 py-2 text-xs font-semibold text-white shadow-lg">
-          <Info size={13} /> Demo mode: simulated data
-        </span>
-      </div>
     </div>
   );
 }
@@ -161,18 +166,36 @@ function sameDay(a: Date, b: Date): boolean {
   );
 }
 
-/** Format a value according to the active $/%/R unit toggle. */
-function fmtUnit(pnl: number, r: number, unit: Unit): string {
+/** Format a value according to the active $/%/R unit toggle. `balance` scales %. */
+function fmtUnit(pnl: number, r: number, unit: Unit, balance: number): string {
   if (unit === "R") {
     const sign = r < 0 ? "-" : "+";
     return `${sign}${Math.abs(r).toFixed(2)}R`;
   }
   if (unit === "%") {
-    const pct = (pnl / ACCOUNT_BALANCE) * 100;
+    const pct = balance > 0 ? (pnl / balance) * 100 : 0;
     const sign = pct < 0 ? "-" : "+";
     return `${sign}${Math.abs(pct).toFixed(2)}%`;
   }
   return fmtMoney(pnl);
+}
+
+function fmtUnitShort(pnl: number, r: number, unit: Unit, balance: number): string {
+  if (unit === "R") return `${r < 0 ? "-" : "+"}${Math.abs(r).toFixed(2)}R`;
+  if (unit === "%")
+    return `${pnl < 0 ? "-" : "+"}${Math.abs(balance > 0 ? (pnl / balance) * 100 : 0).toFixed(2)}%`;
+  const sign = pnl < 0 ? "-" : "+";
+  const abs = Math.abs(pnl);
+  return abs >= 1000
+    ? `${sign}$${(abs / 1000).toFixed(abs % 1000 === 0 ? 0 : 1)}K`
+    : `${sign}$${abs}`;
+}
+
+function hhmm(ts: number): string {
+  return new Date(ts).toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 const MONTHS = [
@@ -220,6 +243,9 @@ function Calendar({
   cursor,
   today,
   selected,
+  trades,
+  unit,
+  balance,
   onSelect,
   onPrev,
   onNext,
@@ -228,6 +254,9 @@ function Calendar({
   cursor: Date;
   today: Date;
   selected: Date;
+  trades: JournalTrade[];
+  unit: Unit;
+  balance: number;
   onSelect: (d: Date) => void;
   onPrev: () => void;
   onNext: () => void;
@@ -266,7 +295,6 @@ function Calendar({
           <h2 className="text-xl font-bold text-gray-900">
             {MONTHS[month]} {year}
           </h2>
-          <span className="text-sm text-gray-400">Time displayed in UTC</span>
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -295,39 +323,31 @@ function Calendar({
           const inMonth = d.getMonth() === month;
           const isToday = sameDay(d, today);
           const isSelected = sameDay(d, selected);
-          const hasTrade = isToday; // only today carries the demo trade
+          const dayTrades = tradesOnDay(trades, d);
+          const hasTrade = dayTrades.length > 0;
+          const pnl = sumPnl(dayTrades);
+          const avgR = dayTrades.length
+            ? dayTrades.reduce((s, t) => s + t.rMultiple, 0) / dayTrades.length
+            : 0;
+          const positive = pnl >= 0;
 
           return (
             <button
               key={i}
               onClick={() => onSelect(new Date(d))}
               className={`relative flex h-24 flex-col rounded-xl border p-2 text-left transition ${
-                isSelected
-                  ? "border-brand ring-1 ring-brand"
-                  : "border-transparent"
+                isSelected ? "border-brand ring-1 ring-brand" : "border-transparent"
               } ${
                 hasTrade
-                  ? "bg-red-50/70 hover:bg-red-50"
+                  ? positive
+                    ? "bg-emerald-50/70 hover:bg-emerald-50"
+                    : "bg-red-50/70 hover:bg-red-50"
                   : inMonth
                     ? "bg-gray-50/70 hover:bg-gray-100"
                     : "bg-transparent hover:bg-gray-50"
               }`}
             >
-              {hasTrade ? (
-                <>
-                  <span className="ml-auto inline-flex items-center gap-1 rounded-md bg-brand px-1.5 py-0.5 text-[11px] font-semibold text-white">
-                    Today {d.getDate()}
-                  </span>
-                  <div className="mt-auto">
-                    <div className="text-[11px] font-medium text-gray-500">
-                      1 Trades
-                    </div>
-                    <div className="text-sm font-bold text-red-500">
-                      {fmtMoney(-1000)}
-                    </div>
-                  </div>
-                </>
-              ) : (
+              <div className="flex items-center justify-between">
                 <span
                   className={`text-sm font-semibold ${
                     inMonth ? "text-gray-500" : "text-gray-300"
@@ -335,6 +355,25 @@ function Calendar({
                 >
                   {d.getDate()}
                 </span>
+                {isToday && (
+                  <span className="rounded-md bg-brand px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                    Today
+                  </span>
+                )}
+              </div>
+              {hasTrade && (
+                <div className="mt-auto">
+                  <div className="text-[11px] font-medium text-gray-500">
+                    {dayTrades.length} {dayTrades.length === 1 ? "Trade" : "Trades"}
+                  </div>
+                  <div
+                    className={`text-sm font-bold ${
+                      positive ? "text-emerald-500" : "text-red-500"
+                    }`}
+                  >
+                    {fmtUnitShort(pnl, avgR, unit, balance)}
+                  </div>
+                </div>
               )}
             </button>
           );
@@ -354,15 +393,19 @@ function DayDetail({
   trades,
   pnl,
   unit,
+  balance,
+  onDelete,
   onPrev,
   onNext,
   onToday,
 }: {
   date: Date;
   isToday: boolean;
-  trades: DemoTrade[];
+  trades: JournalTrade[];
   pnl: number;
   unit: Unit;
+  balance: number;
+  onDelete: (id: string) => void;
   onPrev: () => void;
   onNext: () => void;
   onToday: () => void;
@@ -370,18 +413,18 @@ function DayDetail({
   const [tab, setTab] = useState<"all" | "wins" | "losses">("all");
   const [query, setQuery] = useState("");
 
-  const wins = trades.filter((t) => t.win).length;
+  const wins = trades.filter((t) => isWin(t)).length;
   const losses = trades.length - wins;
   const winRate = trades.length ? (wins / trades.length) * 100 : 0;
   const avgR = trades.length
     ? trades.reduce((s, t) => s + t.rMultiple, 0) / trades.length
     : 0;
+  const planFollowed = trades.length > 0 && trades.every((t) => t.planFollowed);
 
   const rows = trades
-    .filter((t) =>
-      tab === "wins" ? t.win : tab === "losses" ? !t.win : true,
-    )
-    .filter((t) => t.instrument.toLowerCase().includes(query.toLowerCase()));
+    .filter((t) => (tab === "wins" ? isWin(t) : tab === "losses" ? !isWin(t) : true))
+    .filter((t) => t.symbol.toLowerCase().includes(query.toLowerCase()))
+    .sort((a, b) => b.ts - a.ts);
 
   const long = date.toLocaleDateString(undefined, {
     weekday: "long",
@@ -427,7 +470,7 @@ function DayDetail({
           pnl < 0 ? "text-red-500" : pnl > 0 ? "text-emerald-500" : "text-gray-900"
         }`}
       >
-        {fmtUnit(pnl, avgR, unit)}
+        {fmtUnit(pnl, avgR, unit, balance)}
       </div>
       <div className="mt-1 text-xs font-medium uppercase tracking-wide text-gray-400">
         Net PnL
@@ -444,66 +487,34 @@ function DayDetail({
 
       {/* Totals */}
       <div className="mt-5 grid grid-cols-3 gap-3 border-t border-gray-100 pt-4">
-        <StatSmall
-          label="Total Trades"
-          value={<>{trades.length}<span className="text-gray-300"> / 5</span></>}
-        />
-        <StatSmall
-          label="Wins"
-          value={<span className="text-emerald-500">{wins}</span>}
-        />
-        <StatSmall
-          label="Losses"
-          value={<span className="text-red-500">{losses}</span>}
-        />
+        <StatSmall label="Total Trades" value={<>{trades.length}</>} />
+        <StatSmall label="Wins" value={<span className="text-emerald-500">{wins}</span>} />
+        <StatSmall label="Losses" value={<span className="text-red-500">{losses}</span>} />
       </div>
 
       {/* Checklist rows */}
       <div className="mt-5 space-y-0 border-t border-gray-100 pt-2 text-sm">
         <DetailRow label="Plan Followed">
-          <span className="flex items-center gap-1 font-semibold text-emerald-500">
-            Yes <Check size={15} />
-          </span>
-        </DetailRow>
-        <DetailRow label="Guardrail Violations">
-          <span className="flex items-center gap-1 font-semibold text-gray-700">
-            {isToday ? 1 : 0} <ChevronDown size={14} className="text-gray-300" />
-          </span>
-        </DetailRow>
-        <DetailRow label="Pre-Market Routine">
-          <span className="flex items-center gap-1 font-medium text-gray-500">
-            In Progress 1/3{" "}
-            <ChevronDown size={14} className="text-gray-300" />
-          </span>
+          {trades.length === 0 ? (
+            <span className="font-medium text-gray-400">—</span>
+          ) : planFollowed ? (
+            <span className="flex items-center gap-1 font-semibold text-emerald-500">
+              Yes <Check size={15} />
+            </span>
+          ) : (
+            <span className="font-semibold text-red-500">No</span>
+          )}
         </DetailRow>
         <DetailRow label="Trades Journaled">
-          <span className="flex items-center gap-1 font-medium text-emerald-500">
-            Completed {trades.length}/{trades.length || 0}
-            <ChevronDown size={14} className="text-gray-300" />
-          </span>
+          <span className="font-medium text-gray-700">{trades.length}</span>
         </DetailRow>
-      </div>
-
-      {/* Note */}
-      <div className="mt-4 border-t border-gray-100 pt-4">
-        <div className="text-xs font-medium uppercase tracking-wide text-gray-400">
-          Note
-        </div>
-        <div className="mt-1 flex items-center justify-between">
-          <span className="text-sm text-gray-700">
-            {isToday ? "Demo daily note." : "No note for this day."}
-          </span>
-          <button className="text-gray-300 hover:text-gray-500">
-            <Pencil size={15} />
-          </button>
-        </div>
       </div>
 
       {/* Trades */}
       <div className="mt-5 border-t border-gray-100 pt-4">
         <div className="flex items-baseline gap-2">
           <h3 className="text-lg font-bold text-gray-900">Trades</h3>
-          <span className="text-xs text-gray-400">Tap a trade to see details</span>
+          <span className="text-xs text-gray-400">Logged from the Trading page</span>
         </div>
 
         <div className="mt-3 flex items-center justify-between gap-3">
@@ -523,12 +534,13 @@ function DayDetail({
           </div>
         </div>
 
-        <div className="mt-3 grid grid-cols-[1.4fr_0.8fr_0.9fr_0.8fr_0.9fr] gap-2 px-1 text-xs font-semibold text-gray-400">
+        <div className="mt-3 grid grid-cols-[1.3fr_0.7fr_0.9fr_0.6fr_0.9fr_auto] gap-2 px-1 text-xs font-semibold text-gray-400">
           <span>Instrument</span>
           <span>Time</span>
           <span>Direction</span>
-          <span>Emotions</span>
+          <span>Emo</span>
           <span className="text-right">Net PnL</span>
+          <span />
         </div>
 
         {rows.length === 0 ? (
@@ -537,16 +549,17 @@ function DayDetail({
           </div>
         ) : (
           <div className="mt-1 space-y-1">
-            {rows.map((t, i) => (
-              <button
-                key={i}
-                className="grid w-full grid-cols-[1.4fr_0.8fr_0.9fr_0.8fr_0.9fr] items-center gap-2 rounded-lg px-1 py-2.5 text-left text-sm transition hover:bg-gray-50"
+            {rows.map((t) => (
+              <div
+                key={t.id}
+                title={t.note || undefined}
+                className="group grid grid-cols-[1.3fr_0.7fr_0.9fr_0.6fr_0.9fr_auto] items-center gap-2 rounded-lg px-1 py-2.5 text-left text-sm transition hover:bg-gray-50"
               >
                 <span className="flex items-center gap-2 truncate font-semibold text-gray-800">
                   <span>{t.flag}</span>
-                  {t.instrument}
+                  {t.symbol}
                 </span>
-                <span className="text-gray-500">{t.time}</span>
+                <span className="text-gray-500">{hhmm(t.ts)}</span>
                 <span
                   className={
                     t.direction === "Buy"
@@ -556,32 +569,28 @@ function DayDetail({
                 >
                   {t.direction === "Buy" ? "↑" : "↓"} {t.direction}
                 </span>
-                <span className="text-gray-400">{t.emotions}</span>
+                <span className="text-base">{t.emotion || "—"}</span>
                 <span
                   className={`text-right font-semibold ${
                     t.netPnl < 0 ? "text-red-500" : "text-emerald-500"
                   }`}
                 >
-                  {fmtUnitShort(t.netPnl, t.rMultiple, unit)}
+                  {fmtUnitShort(t.netPnl, t.rMultiple, unit, balance)}
                 </span>
-              </button>
+                <button
+                  onClick={() => onDelete(t.id)}
+                  title="Delete trade"
+                  className="rounded-md p-1 text-gray-300 opacity-0 transition hover:bg-red-50 hover:text-red-500 group-hover:opacity-100"
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
             ))}
           </div>
         )}
       </div>
     </div>
   );
-}
-
-function fmtUnitShort(pnl: number, r: number, unit: Unit): string {
-  if (unit === "R") return `${r < 0 ? "-" : "+"}${Math.abs(r).toFixed(2)}R`;
-  if (unit === "%")
-    return `${pnl < 0 ? "-" : "+"}${Math.abs((pnl / ACCOUNT_BALANCE) * 100).toFixed(2)}%`;
-  const sign = pnl < 0 ? "-" : "+";
-  const abs = Math.abs(pnl);
-  return abs >= 1000
-    ? `${sign}$${(abs / 1000).toFixed(abs % 1000 === 0 ? 0 : 1)}K`
-    : `${sign}$${abs}`;
 }
 
 function StatBig({ label, value }: { label: string; value: string }) {
@@ -652,56 +661,95 @@ function FilterTab({
 // Monthly summary
 // ===========================================================================
 
-function MonthlySummary() {
+const R_BUCKETS = ["<-2R", "-1R", "0R", "1R", "2R", ">2R"];
+
+function bucketIndex(r: number): number {
+  if (r < -1.5) return 0;
+  if (r < -0.5) return 1;
+  if (r <= 0.5) return 2;
+  if (r <= 1.5) return 3;
+  if (r <= 2.5) return 4;
+  return 5;
+}
+
+function MonthlySummary({ trades }: { trades: JournalTrade[] }) {
+  const wins = trades.filter((t) => isWin(t));
+  const losses = trades.filter((t) => !isWin(t));
+  const pnl = sumPnl(trades);
+  const avgR = trades.length
+    ? trades.reduce((s, t) => s + t.rMultiple, 0) / trades.length
+    : 0;
+  const winRate = trades.length ? (wins.length / trades.length) * 100 : 0;
+  const avgWin = wins.length ? sumPnl(wins) / wins.length : 0;
+  const avgLoss = losses.length ? sumPnl(losses) / losses.length : 0;
+  const best = trades.length ? Math.max(...trades.map((t) => t.netPnl)) : 0;
+  const worst = trades.length ? Math.min(...trades.map((t) => t.netPnl)) : 0;
+
+  const buckets = R_BUCKETS.map((_, i) =>
+    trades.filter((t) => bucketIndex(t.rMultiple) === i).length,
+  );
+  const maxBucket = Math.max(1, ...buckets);
+
+  const money = (n: number): [string, string] => [
+    fmtMoney(n),
+    n < 0 ? "text-red-500" : n > 0 ? "text-emerald-500" : "text-gray-800",
+  ];
+
   const stats: [string, string, string?][] = [
-    ["Monthly P&L", "-$1,000.00", "text-red-500"],
-    ["Expectancy", "1.00R"],
-    ["Win rate", "0.0%"],
-    ["Avg Win", "$0.00"],
-    ["Avg Loss", "-$1,000.00", "text-red-500"],
-    ["Best trade", "-$1,000.00", "text-red-500"],
-    ["Worst trade", "-$1,000.00", "text-red-500"],
-    ["Total trades", "1"],
-    ["", "0W/1L"],
+    ["Monthly P&L", ...money(pnl)],
+    ["Expectancy", `${avgR >= 0 ? "" : "-"}${Math.abs(avgR).toFixed(2)}R`],
+    ["Win rate", `${winRate.toFixed(1)}%`],
+    ["Avg Win", ...money(avgWin)],
+    ["Avg Loss", ...money(avgLoss)],
+    ["Best trade", ...money(best)],
+    ["Worst trade", ...money(worst)],
+    ["Total trades", String(trades.length)],
+    ["", `${wins.length}W/${losses.length}L`],
   ];
 
   return (
     <div className="rounded-2xl border border-black/5 bg-white p-5 shadow-sm">
       <h3 className="mb-4 text-lg font-bold text-gray-900">Monthly Summary</h3>
-      <div className="flex gap-5">
-        {/* Distribution bar chart (single R bucket populated) */}
-        <div className="flex flex-col items-center">
-          <div className="flex h-32 items-end gap-1.5">
-            {["<-2R", "-1R", "0R", "1R", "2R", ">2R"].map((b) => (
-              <div key={b} className="flex flex-col items-center gap-1">
-                <div
-                  className="w-4 rounded-t bg-brand"
-                  style={{ height: b === "-1R" ? "100%" : "2px" }}
-                />
+      {trades.length === 0 ? (
+        <div className="py-10 text-center text-sm text-gray-400">
+          No trades logged this month.
+        </div>
+      ) : (
+        <div className="flex gap-5">
+          {/* R-distribution bar chart */}
+          <div className="flex flex-col items-center">
+            <div className="flex h-32 items-end gap-1.5">
+              {buckets.map((count, i) => (
+                <div key={i} className="flex h-full flex-col items-center justify-end gap-1">
+                  <div
+                    className="w-4 rounded-t bg-brand"
+                    style={{
+                      height: `${count ? Math.max(4, (count / maxBucket) * 100) : 2}%`,
+                    }}
+                  />
+                </div>
+              ))}
+            </div>
+            <div className="mt-1 flex gap-1.5 text-[9px] text-gray-400">
+              {R_BUCKETS.map((b) => (
+                <span key={b} className="w-4 text-center">
+                  {b}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          {/* Stat list */}
+          <div className="flex-1 space-y-1.5 text-sm">
+            {stats.map(([label, value, cls], i) => (
+              <div key={i} className="flex items-center justify-between">
+                <span className="text-gray-400">{label}</span>
+                <span className={`font-semibold ${cls ?? "text-gray-800"}`}>{value}</span>
               </div>
             ))}
           </div>
-          <div className="mt-1 flex gap-1.5 text-[9px] text-gray-400">
-            {["<-2R", "-1R", "0R", "1R", "2R", ">2R"].map((b) => (
-              <span key={b} className="w-4 text-center">
-                {b}
-              </span>
-            ))}
-          </div>
         </div>
-
-        {/* Stat list */}
-        <div className="flex-1 space-y-1.5 text-sm">
-          {stats.map(([label, value, cls], i) => (
-            <div key={i} className="flex items-center justify-between">
-              <span className="text-gray-400">{label}</span>
-              <span className={`font-semibold ${cls ?? "text-gray-800"}`}>
-                {value}
-              </span>
-            </div>
-          ))}
-        </div>
-      </div>
+      )}
     </div>
   );
 }
@@ -710,7 +758,10 @@ function MonthlySummary() {
 // Weekly breakdown
 // ===========================================================================
 
-function WeeklyBreakdown() {
+function WeeklyBreakdown({ trades }: { trades: JournalTrade[] }) {
+  const pnl = sumPnl(trades);
+  const days = new Set(trades.map((t) => new Date(t.ts).toDateString())).size;
+
   return (
     <div className="rounded-2xl border border-black/5 bg-white p-5 shadow-sm">
       <div className="mb-4 flex items-center gap-1.5">
@@ -718,11 +769,17 @@ function WeeklyBreakdown() {
         <Info size={14} className="text-gray-300" />
       </div>
       <div className="rounded-xl border border-brand/15 bg-brand-soft/40 p-4">
-        <div className="text-xs font-medium text-brand">Current</div>
+        <div className="text-xs font-medium text-brand">Selected week</div>
         <span className="mt-2 inline-block rounded-md bg-white px-2 py-0.5 text-xs font-medium text-gray-500">
-          2 days
+          {days} {days === 1 ? "day" : "days"} traded
         </span>
-        <div className="mt-3 text-2xl font-bold text-red-500">-$1,000.00</div>
+        <div
+          className={`mt-3 text-2xl font-bold ${
+            pnl < 0 ? "text-red-500" : pnl > 0 ? "text-emerald-500" : "text-gray-900"
+          }`}
+        >
+          {fmtMoney(pnl)}
+        </div>
       </div>
     </div>
   );

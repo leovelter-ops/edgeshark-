@@ -1,21 +1,23 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Info,
   ChevronDown,
   Zap,
-  Lock,
   ChevronsRight,
   Star,
-  Bell,
   ClipboardList,
   Search,
   Pin,
   XCircle,
   X,
   Play,
+  Plus,
+  Pencil,
+  Check,
+  Trash2,
   AlertTriangle,
   CheckCircle2,
   Circle,
@@ -32,9 +34,7 @@ import {
 import {
   INSTRUMENTS,
   Instrument,
-  Position,
   PINS_KEY,
-  POSITIONS_KEY,
   PREMARKET_KEY,
   fmtMoney,
   fmtPrice,
@@ -53,70 +53,66 @@ import {
   routineDayKey,
   loadSetting,
 } from "@/lib/settings";
+import {
+  JournalTrade,
+  JOURNAL_EVENT,
+  BALANCE_EVENT,
+  loadTrades,
+  loadStartingBalance,
+  saveStartingBalance,
+  addTrade,
+  deleteTrade,
+  tradesOnDay,
+  sumPnl,
+} from "@/lib/journal";
 import { Plan } from "@/lib/types";
 import { getActivePlan, ACTIVE_PLAN_EVENT } from "@/lib/activePlan";
 
-const STARTING_BALANCE = 10000;
+const EMOTIONS = ["😌", "🤩", "😏", "😀", "🚀", "😰", "😡"];
 
 export default function TradingPage() {
-  const [positions, setPositions] = useState<Position[]>([]);
-  const [ticketOpen, setTicketOpen] = useState(false);
+  const [logOpen, setLogOpen] = useState(false);
   const [selected, setSelected] = useState<Instrument>(INSTRUMENTS[0]);
+  const [trades, setTrades] = useState<JournalTrade[]>([]);
+  const [balance, setBalance] = useState<number>(0);
 
   const prefs = useMemo(() => loadSetting(TRADING_KEY, DEFAULT_TRADING), []);
   const routine = useMemo(() => loadSetting(ROUTINE_KEY, DEFAULT_ROUTINE), []);
   const account = useMemo(() => loadSetting(ACCOUNT_KEY, DEFAULT_ACCOUNT), []);
 
+  // Load logged trades + starting balance, and stay in sync when either changes
+  // (here or on the Journal page).
   useEffect(() => {
-    try {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setPositions(JSON.parse(localStorage.getItem(POSITIONS_KEY) || "[]"));
-    } catch {
-      /* ignore */
-    }
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setTrades(loadTrades());
+    setBalance(loadStartingBalance());
+    const onTrades = (e: Event) =>
+      setTrades((e as CustomEvent<JournalTrade[]>).detail);
+    const onBalance = (e: Event) =>
+      setBalance((e as CustomEvent<number>).detail);
+    window.addEventListener(JOURNAL_EVENT, onTrades);
+    window.addEventListener(BALANCE_EVENT, onBalance);
+    return () => {
+      window.removeEventListener(JOURNAL_EVENT, onTrades);
+      window.removeEventListener(BALANCE_EVENT, onBalance);
+    };
   }, []);
 
-  const persist = (next: Position[]) => {
-    setPositions(next);
-    localStorage.setItem(POSITIONS_KEY, JSON.stringify(next));
+  const todayTrades = useMemo(() => tradesOnDay(trades, new Date()), [trades]);
+  const todayPnl = sumPnl(todayTrades);
+  // Running equity = the balance you set + all realized PnL you've logged.
+  const equity = balance + sumPnl(trades);
+
+  const saveBalance = (n: number) => {
+    setBalance(n);
+    saveStartingBalance(n);
   };
 
-  const open = positions.filter((p) => p.status === "open");
-  const closed = positions.filter((p) => p.status === "closed");
-  const openPnl = open.reduce((s, p) => s + p.pnl, 0);
-  const closedPnl = closed
-    .filter((p) => p.closedAt && sameDay(p.closedAt))
-    .reduce((s, p) => s + p.pnl, 0);
-  const equity = STARTING_BALANCE + openPnl;
-
-  function placeOrder(side: "Buy" | "Sell", volume: number) {
-    const p: Position = {
-      id: `p-${Date.now()}`,
-      symbol: selected.symbol,
-      side,
-      volume,
-      entry: selected.last,
-      openedAt: Date.now(),
-      status: "open",
-      pnl: 0, // demo: broker closed, no live movement
-    };
-    persist([...positions, p]);
-    setTicketOpen(false);
-  }
-  function exit(id: string) {
-    persist(
-      positions.map((p) =>
-        p.id === id ? { ...p, status: "closed", closedAt: Date.now() } : p,
-      ),
-    );
-  }
-  function exitAll() {
-    persist(
-      positions.map((p) =>
-        p.status === "open" ? { ...p, status: "closed", closedAt: Date.now() } : p,
-      ),
-    );
-  }
+  const logTrade = (t: JournalTrade) => {
+    setTrades(addTrade(t));
+    setLogOpen(false);
+  };
+  const removeTrade = (id: string) => setTrades(deleteTrade(id));
 
   return (
     <div className="min-h-screen px-6 py-6">
@@ -124,14 +120,18 @@ export default function TradingPage() {
       <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
         <h1 className="text-3xl font-bold text-gray-900">Trading</h1>
         <div className="flex items-center gap-6">
-          <Metric label="Balance" value={`$${STARTING_BALANCE.toLocaleString(undefined, { minimumFractionDigits: 2 })}`} />
+          <BalanceMetric value={balance} onSave={saveBalance} />
           <Metric
-            label="Open PnL"
-            value={fmtMoney(openPnl)}
-            valueClass={openPnl < 0 ? "text-red-500" : "text-emerald-500"}
+            label="Today's PnL"
+            value={fmtMoney(todayPnl)}
+            valueClass={todayPnl < 0 ? "text-red-500" : "text-emerald-500"}
             info
           />
-          <Metric label="Equity" value={`$${equity.toLocaleString(undefined, { minimumFractionDigits: 2 })}`} info />
+          <Metric
+            label="Equity"
+            value={`$${equity.toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
+            info
+          />
           <div className="text-right">
             <div className="flex items-center gap-1 text-xs text-gray-400">
               Margin Health <Info size={12} /> <ChevronDown size={12} />
@@ -144,10 +144,10 @@ export default function TradingPage() {
             <Zap size={18} />
           </button>
           <button
-            onClick={() => setTicketOpen(true)}
+            onClick={() => setLogOpen(true)}
             className="flex items-center gap-2 rounded-lg bg-brand px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-105"
           >
-            <Lock size={14} /> Trade
+            <Plus size={16} /> Log Trade
           </button>
           <button className="text-gray-300 hover:text-gray-500">
             <ChevronsRight size={20} />
@@ -159,54 +159,33 @@ export default function TradingPage() {
         <PreMarketBanner routine={routine} timezone={account.timezone} />
       )}
 
-      <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-[1fr_380px]">
-        {/* Left: chart + positions */}
-        <div className="min-w-0 space-y-4">
-          <div className="relative h-[540px] overflow-hidden rounded-2xl border border-black/5 bg-white shadow-sm">
-            <TradingViewChart symbol={selected.tvSymbol} />
-            <div className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2">
-              <span className="flex items-center gap-1.5 rounded-full bg-brand px-3 py-1.5 text-xs font-semibold text-white shadow">
-                <Info size={13} /> Demo mode: simulated data
-              </span>
-            </div>
-          </div>
-
-          <Positions open={open} closed={closed} onExit={exit} onExitAll={exitAll} />
-        </div>
-
-        {/* Right: status + watchlist */}
-        <div className="space-y-4">
-          <StatusPanel
-            tradesToday={open.length + closed.length}
-            maxTrades={prefs.maxTradesPerDay}
-            windowStart={prefs.windowStart}
-            windowEnd={prefs.windowEnd}
-            closedPnl={closedPnl}
-            maxLoss={prefs.maxDailyLoss}
-            maxProfit={prefs.maxDailyProfit}
-          />
-          <Watchlist selected={selected} onSelect={setSelected} />
-        </div>
+      {/* Two big panels: risk status + watchlist */}
+      <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <StatusPanel
+          tradesToday={todayTrades.length}
+          maxTrades={prefs.maxTradesPerDay}
+          windowStart={prefs.windowStart}
+          windowEnd={prefs.windowEnd}
+          closedPnl={todayPnl}
+          maxLoss={prefs.maxDailyLoss}
+          maxProfit={prefs.maxDailyProfit}
+        />
+        <Watchlist selected={selected} onSelect={setSelected} />
       </div>
 
-      {ticketOpen && (
-        <OrderTicket
+      {/* Today's logged trades */}
+      <div className="mt-4">
+        <TodayTrades trades={todayTrades} onDelete={removeTrade} onLog={() => setLogOpen(true)} />
+      </div>
+
+      {logOpen && (
+        <LogTradeModal
           instrument={selected}
-          onPlace={placeOrder}
-          onClose={() => setTicketOpen(false)}
+          onLog={logTrade}
+          onClose={() => setLogOpen(false)}
         />
       )}
     </div>
-  );
-}
-
-function sameDay(ts: number): boolean {
-  const d = new Date(ts);
-  const n = new Date();
-  return (
-    d.getFullYear() === n.getFullYear() &&
-    d.getMonth() === n.getMonth() &&
-    d.getDate() === n.getDate()
   );
 }
 
@@ -227,6 +206,73 @@ function Metric({
         {label} {info && <Info size={12} />}
       </div>
       <div className={`mt-0.5 text-lg font-bold ${valueClass}`}>{value}</div>
+    </div>
+  );
+}
+
+// Editable starting account balance. Click to set it the first time; running
+// equity is derived from it plus logged PnL.
+function BalanceMetric({
+  value,
+  onSave,
+}: {
+  value: number;
+  onSave: (n: number) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+
+  const start = () => {
+    setDraft(String(value));
+    setEditing(true);
+  };
+  const commit = () => {
+    const n = Number(draft);
+    if (draft.trim() !== "" && Number.isFinite(n) && n >= 0) onSave(n);
+    setEditing(false);
+  };
+
+  return (
+    <div className="text-right">
+      <div className="flex items-center justify-end gap-1 text-xs text-gray-400">
+        Balance
+      </div>
+      {editing ? (
+        <div className="mt-0.5 flex items-center justify-end gap-1">
+          <span className="text-lg font-bold text-gray-400">$</span>
+          <input
+            autoFocus
+            type="number"
+            step="0.01"
+            min="0"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={commit}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") commit();
+              if (e.key === "Escape") setEditing(false);
+            }}
+            className="w-28 rounded-md border border-brand px-2 py-0.5 text-right text-lg font-bold text-gray-900 outline-none"
+          />
+          <button
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={commit}
+            className="rounded-md p-1 text-brand hover:bg-brand-soft"
+            title="Save balance"
+          >
+            <Check size={15} />
+          </button>
+        </div>
+      ) : (
+        <button
+          onClick={start}
+          title="Set account balance"
+          className="group mt-0.5 flex items-center justify-end gap-1 text-lg font-bold text-gray-900"
+        >
+          ${value.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+          <Pencil size={12} className="text-gray-300 transition group-hover:text-brand" />
+        </button>
+      )}
     </div>
   );
 }
@@ -534,148 +580,103 @@ function RoutineChecklist({
 }
 
 // ===========================================================================
-// TradingView advanced chart (embedded widget)
+// Today's logged trades
 // ===========================================================================
 
-function TradingViewChart({ symbol }: { symbol: string }) {
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const container = ref.current;
-    if (!container) return;
-    container.innerHTML = `<div class="tradingview-widget-container__widget" style="height:100%;width:100%"></div>`;
-    const script = document.createElement("script");
-    script.src =
-      "https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js";
-    script.async = true;
-    script.innerHTML = JSON.stringify({
-      autosize: true,
-      symbol,
-      interval: "1",
-      timezone: "America/New_York",
-      theme: "light",
-      style: "1",
-      locale: "en",
-      hide_side_toolbar: false,
-      allow_symbol_change: true,
-      calendar: false,
-      support_host: "https://www.tradingview.com",
-    });
-    container.appendChild(script);
-    return () => {
-      container.innerHTML = "";
-    };
-  }, [symbol]);
-
-  return (
-    <div
-      ref={ref}
-      className="tradingview-widget-container"
-      style={{ height: "100%", width: "100%" }}
-    />
-  );
-}
-
-// ===========================================================================
-// Positions
-// ===========================================================================
-
-function Positions({
-  open,
-  closed,
-  onExit,
-  onExitAll,
+function TodayTrades({
+  trades,
+  onDelete,
+  onLog,
 }: {
-  open: Position[];
-  closed: Position[];
-  onExit: (id: string) => void;
-  onExitAll: () => void;
+  trades: JournalTrade[];
+  onDelete: (id: string) => void;
+  onLog: () => void;
 }) {
-  const [tab, setTab] = useState<"open" | "pending" | "closed">("open");
-  const rows = tab === "open" ? open : tab === "closed" ? closed : [];
-
   return (
-    <div className="rounded-2xl border border-black/5 bg-white p-5 shadow-sm">
-      <div className="mb-4 flex items-center justify-between border-b border-gray-100">
-        <div className="flex gap-6">
-          <PosTab label="Open Positions" count={open.length} active={tab === "open"} onClick={() => setTab("open")} />
-          <PosTab label="Pending Orders" count={0} active={tab === "pending"} onClick={() => setTab("pending")} />
-          <PosTab label="Closed Positions" count={closed.length} active={tab === "closed"} onClick={() => setTab("closed")} />
+    <div className="rounded-2xl border border-black/5 bg-white p-6 shadow-sm">
+      <div className="mb-4 flex items-center justify-between">
+        <div className="flex items-baseline gap-2">
+          <h3 className="text-lg font-bold text-gray-900">Today&apos;s Trades</h3>
+          <span className="text-sm text-gray-400">
+            Logged to your Journal calendar
+          </span>
         </div>
-        {tab === "open" && open.length > 0 && (
-          <button
-            onClick={onExitAll}
-            className="mb-2 rounded-lg border border-gray-200 px-3 py-1 text-sm font-medium text-gray-600 hover:bg-gray-50"
-          >
-            Exit All
-          </button>
-        )}
+        <button
+          onClick={onLog}
+          className="flex items-center gap-1.5 rounded-lg border border-brand/30 bg-brand-soft px-3 py-1.5 text-sm font-semibold text-brand transition hover:brightness-105"
+        >
+          <Plus size={15} /> Log Trade
+        </button>
       </div>
 
-      {rows.length === 0 ? (
+      {trades.length === 0 ? (
         <div className="py-16 text-center text-gray-400">
-          No {tab === "open" ? "open positions" : tab === "pending" ? "pending orders" : "closed positions"}
+          No trades logged today. Hit{" "}
+          <span className="font-semibold text-brand">Log Trade</span> to record
+          one.
         </div>
       ) : (
-        <div className="space-y-2">
-          {rows.map((p) => (
-            <div
-              key={p.id}
-              className="flex items-center justify-between rounded-lg border border-gray-100 px-4 py-3 text-sm"
-            >
-              <div className="flex items-center gap-3">
-                <span
-                  className={`rounded px-2 py-0.5 text-xs font-bold ${
-                    p.side === "Buy" ? "bg-emerald-50 text-emerald-600" : "bg-red-50 text-red-500"
-                  }`}
+        <>
+          <div className="grid grid-cols-[1.4fr_0.9fr_0.7fr_0.7fr_1fr_auto] gap-3 border-b border-gray-100 px-2 pb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">
+            <span>Instrument</span>
+            <span>Time</span>
+            <span>Direction</span>
+            <span className="text-right">R</span>
+            <span className="text-right">Net PnL</span>
+            <span />
+          </div>
+          <div className="mt-1 space-y-1">
+            {trades
+              .slice()
+              .sort((a, b) => b.ts - a.ts)
+              .map((t) => (
+                <div
+                  key={t.id}
+                  className="grid grid-cols-[1.4fr_0.9fr_0.7fr_0.7fr_1fr_auto] items-center gap-3 rounded-lg px-2 py-3 text-sm transition hover:bg-gray-50"
                 >
-                  {p.side}
-                </span>
-                <span className="font-semibold text-gray-800">{p.symbol}</span>
-                <span className="text-gray-400">{p.volume} lot</span>
-                <span className="text-gray-400">@ {p.entry}</span>
-              </div>
-              <div className="flex items-center gap-4">
-                <span className={p.pnl < 0 ? "text-red-500" : "text-emerald-500"}>
-                  {fmtMoney(p.pnl)}
-                </span>
-                {p.status === "open" && (
-                  <button
-                    onClick={() => onExit(p.id)}
-                    className="rounded-md border border-gray-200 px-2.5 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50"
+                  <span className="flex items-center gap-2 truncate font-semibold text-gray-800">
+                    <span>{t.flag}</span>
+                    {t.symbol}
+                    {t.emotion && <span className="text-base">{t.emotion}</span>}
+                  </span>
+                  <span className="text-gray-500">
+                    {new Date(t.ts).toLocaleTimeString(undefined, {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
+                  </span>
+                  <span
+                    className={
+                      t.direction === "Buy"
+                        ? "font-semibold text-emerald-500"
+                        : "font-semibold text-red-500"
+                    }
                   >
-                    Exit
+                    {t.direction === "Buy" ? "↑" : "↓"} {t.direction}
+                  </span>
+                  <span className="text-right tabular-nums text-gray-500">
+                    {t.rMultiple ? `${t.rMultiple > 0 ? "+" : ""}${t.rMultiple}R` : "—"}
+                  </span>
+                  <span
+                    className={`text-right font-semibold tabular-nums ${
+                      t.netPnl < 0 ? "text-red-500" : "text-emerald-500"
+                    }`}
+                  >
+                    {fmtMoney(t.netPnl)}
+                  </span>
+                  <button
+                    onClick={() => onDelete(t.id)}
+                    title="Delete trade"
+                    className="rounded-md p-1.5 text-gray-300 transition hover:bg-red-50 hover:text-red-500"
+                  >
+                    <Trash2 size={15} />
                   </button>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
+                </div>
+              ))}
+          </div>
+        </>
       )}
     </div>
-  );
-}
-
-function PosTab({
-  label,
-  count,
-  active,
-  onClick,
-}: {
-  label: string;
-  count: number;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={`-mb-px border-b-2 pb-3 text-sm font-semibold transition ${
-        active ? "border-brand text-gray-900" : "border-transparent text-gray-400 hover:text-gray-600"
-      }`}
-    >
-      {label} <span className={active ? "text-brand" : "text-gray-300"}>{count}</span>
-    </button>
   );
 }
 
@@ -707,7 +708,7 @@ function StatusPanel({
   const pct = span > 0 ? ((closedPnl + maxLoss) / span) * 100 : 50;
 
   return (
-    <div className="rounded-2xl border border-black/5 bg-white p-5 shadow-sm">
+    <div className="rounded-2xl border border-black/5 bg-white p-6 shadow-sm">
       {/* Trades dots */}
       <div className="mb-4 flex items-center gap-2">
         <span className="text-sm font-medium text-gray-500">Trades:</span>
@@ -803,7 +804,7 @@ function Watchlist({
   selected: Instrument;
   onSelect: (i: Instrument) => void;
 }) {
-  const [tab, setTab] = useState<"watchlist" | "alerts" | "plan">("watchlist");
+  const [tab, setTab] = useState<"plan" | "watchlist">("plan");
   const [query, setQuery] = useState("");
   const [pins, setPins] = useState<string[]>([]);
   const [activePlan, setActivePlanState] = useState<Plan | null>(null);
@@ -815,7 +816,6 @@ function Watchlist({
     } catch {
       /* ignore */
     }
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setActivePlanState(getActivePlan());
     // Keep in sync when the active plan changes on the Edge page.
     const onActiveChange = (e: Event) =>
@@ -837,11 +837,10 @@ function Watchlist({
   ).sort((a, b) => Number(pins.includes(b.symbol)) - Number(pins.includes(a.symbol)));
 
   return (
-    <div className="rounded-2xl border border-black/5 bg-white p-5 shadow-sm">
+    <div className="rounded-2xl border border-black/5 bg-white p-6 shadow-sm">
       <div className="mb-4 flex gap-5 border-b border-gray-100">
-        <WlTab icon={Star} label="Watchlist" active={tab === "watchlist"} onClick={() => setTab("watchlist")} />
-        <WlTab icon={Bell} label="Alerts" active={tab === "alerts"} onClick={() => setTab("alerts")} />
         <WlTab icon={ClipboardList} label="Trading Plan" active={tab === "plan"} onClick={() => setTab("plan")} />
+        <WlTab icon={Star} label="Watchlist" active={tab === "watchlist"} onClick={() => setTab("watchlist")} />
       </div>
 
       {tab === "watchlist" && (
@@ -860,7 +859,7 @@ function Watchlist({
             <span className="text-right">Last</span>
             <span className="text-right">Chg</span>
           </div>
-          <div className="max-h-80 space-y-0.5 overflow-y-auto">
+          <div className="max-h-96 space-y-0.5 overflow-y-auto">
             {list.map((i) => (
               <button
                 key={i.symbol}
@@ -905,12 +904,6 @@ function Watchlist({
         </>
       )}
 
-      {tab === "alerts" && (
-        <div className="py-14 text-center text-sm text-gray-400">
-          <Bell size={32} className="mx-auto mb-2 text-gray-200" />
-          No alerts set. Create one from any instrument.
-        </div>
-      )}
       {tab === "plan" && <ActivePlanTab plan={activePlan} />}
     </div>
   );
@@ -1047,87 +1040,206 @@ function PlanSection({
 }
 
 // ===========================================================================
-// Order ticket
+// Log trade form
 // ===========================================================================
 
-function OrderTicket({
+/** Format a Date as the value a datetime-local input expects (local time). */
+function toLocalInput(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function LogTradeModal({
   instrument,
-  onPlace,
+  onLog,
   onClose,
 }: {
   instrument: Instrument;
-  onPlace: (side: "Buy" | "Sell", volume: number) => void;
+  onLog: (t: JournalTrade) => void;
   onClose: () => void;
 }) {
-  const [side, setSide] = useState<"Buy" | "Sell">("Buy");
-  const [volume, setVolume] = useState("0.10");
-  const vol = parseFloat(volume) || 0;
+  const [symbol, setSymbol] = useState(instrument.symbol);
+  const [direction, setDirection] = useState<"Buy" | "Sell">("Buy");
+  const [pnl, setPnl] = useState("");
+  const [rMultiple, setRMultiple] = useState("");
+  const [emotion, setEmotion] = useState("");
+  const [planFollowed, setPlanFollowed] = useState(true);
+  const [note, setNote] = useState("");
+  const [when, setWhen] = useState(() => toLocalInput(new Date()));
+
+  const inst = INSTRUMENTS.find((i) => i.symbol === symbol) ?? instrument;
+  const pnlValid = pnl.trim() !== "" && !Number.isNaN(Number(pnl));
+
+  const submit = () => {
+    if (!pnlValid) return;
+    const ts = when ? new Date(when).getTime() : Date.now();
+    onLog({
+      id: `t-${Date.now()}`,
+      symbol: inst.symbol,
+      flag: inst.flag,
+      direction,
+      netPnl: Number(pnl),
+      rMultiple: rMultiple.trim() === "" ? 0 : Number(rMultiple),
+      emotion,
+      note: note.trim(),
+      planFollowed,
+      ts: Number.isNaN(ts) ? Date.now() : ts,
+    });
+  };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/30 p-4 pt-24 backdrop-blur-sm">
-      <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
-        <div className="mb-4 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span>{instrument.flag}</span>
-            <div>
-              <div className="font-bold text-gray-900">{instrument.symbol}</div>
-              <div className="text-xs text-gray-400">{instrument.name}</div>
-            </div>
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/30 p-4 pt-16 backdrop-blur-sm">
+      <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+        <div className="mb-5 flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-bold text-gray-900">Log a Trade</h2>
+            <p className="text-sm text-gray-500">Records to your Journal calendar.</p>
           </div>
           <button onClick={onClose} className="rounded p-1 text-gray-400 hover:bg-gray-100">
             <X size={18} />
           </button>
         </div>
 
-        <div className="mb-4 grid grid-cols-2 gap-2">
-          <button
-            onClick={() => setSide("Sell")}
-            className={`rounded-lg py-3 text-sm font-bold transition ${
-              side === "Sell" ? "bg-red-500 text-white" : "bg-red-50 text-red-500"
-            }`}
-          >
-            Sell
-            <div className="text-xs font-medium opacity-80">
-              {fmtPrice(instrument.last - 0.0001, instrument.digits)}
-            </div>
-          </button>
-          <button
-            onClick={() => setSide("Buy")}
-            className={`rounded-lg py-3 text-sm font-bold transition ${
-              side === "Buy" ? "bg-emerald-500 text-white" : "bg-emerald-50 text-emerald-600"
-            }`}
-          >
-            Buy
-            <div className="text-xs font-medium opacity-80">
-              {fmtPrice(instrument.last, instrument.digits)}
-            </div>
-          </button>
+        {/* Instrument */}
+        <Field label="Instrument">
+          <div className="relative">
+            <select
+              value={symbol}
+              onChange={(e) => setSymbol(e.target.value)}
+              className="w-full appearance-none rounded-lg border border-gray-200 bg-white px-3 py-2.5 pr-8 text-sm text-gray-800 outline-none focus:border-brand"
+            >
+              {INSTRUMENTS.map((i) => (
+                <option key={i.symbol} value={i.symbol}>
+                  {i.flag} {i.symbol} — {i.name}
+                </option>
+              ))}
+            </select>
+            <ChevronDown
+              size={15}
+              className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400"
+            />
+          </div>
+        </Field>
+
+        {/* Direction */}
+        <Field label="Direction">
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              onClick={() => setDirection("Sell")}
+              className={`rounded-lg py-2.5 text-sm font-bold transition ${
+                direction === "Sell" ? "bg-red-500 text-white" : "bg-red-50 text-red-500"
+              }`}
+            >
+              ↓ Sell
+            </button>
+            <button
+              onClick={() => setDirection("Buy")}
+              className={`rounded-lg py-2.5 text-sm font-bold transition ${
+                direction === "Buy" ? "bg-emerald-500 text-white" : "bg-emerald-50 text-emerald-600"
+              }`}
+            >
+              ↑ Buy
+            </button>
+          </div>
+        </Field>
+
+        {/* PnL + R */}
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Net PnL ($)">
+            <input
+              type="number"
+              step="0.01"
+              value={pnl}
+              onChange={(e) => setPnl(e.target.value)}
+              placeholder="e.g. -250 or 500"
+              className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+            />
+          </Field>
+          <Field label="R multiple (optional)">
+            <input
+              type="number"
+              step="0.1"
+              value={rMultiple}
+              onChange={(e) => setRMultiple(e.target.value)}
+              placeholder="e.g. 2 or -1"
+              className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+            />
+          </Field>
         </div>
 
-        <label className="mb-1.5 block text-sm font-medium text-gray-600">Volume (lots)</label>
-        <input
-          type="number"
-          step="0.01"
-          min="0.01"
-          value={volume}
-          onChange={(e) => setVolume(e.target.value)}
-          className="mb-4 w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
-        />
+        {/* Date/time */}
+        <Field label="Date & time">
+          <input
+            type="datetime-local"
+            value={when}
+            onChange={(e) => setWhen(e.target.value)}
+            className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm text-gray-800 outline-none focus:border-brand"
+          />
+        </Field>
 
-        <div className="mb-4 flex items-center gap-1.5 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-500">
-          <Info size={13} /> Demo mode — orders are simulated, no live PnL.
-        </div>
+        {/* Emotion */}
+        <Field label="Emotion (optional)">
+          <div className="flex gap-1.5">
+            {EMOTIONS.map((e) => (
+              <button
+                key={e}
+                onClick={() => setEmotion(emotion === e ? "" : e)}
+                className={`flex h-9 w-9 items-center justify-center rounded-lg border text-lg transition ${
+                  emotion === e
+                    ? "border-brand bg-brand-soft"
+                    : "border-gray-200 hover:bg-gray-50"
+                }`}
+              >
+                {e}
+              </button>
+            ))}
+          </div>
+        </Field>
+
+        {/* Plan followed */}
+        <label className="mb-4 flex items-center gap-2 text-sm font-medium text-gray-700">
+          <input
+            type="checkbox"
+            checked={planFollowed}
+            onChange={(e) => setPlanFollowed(e.target.checked)}
+            className="h-4 w-4 accent-brand"
+          />
+          I followed my trade plan
+        </label>
+
+        {/* Note */}
+        <Field label="Note (optional)">
+          <textarea
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            rows={2}
+            placeholder="What happened on this trade?"
+            className="w-full resize-none rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+          />
+        </Field>
 
         <button
-          disabled={vol <= 0}
-          onClick={() => onPlace(side, vol)}
-          className={`w-full rounded-lg py-3 text-sm font-bold text-white transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-40 ${
-            side === "Buy" ? "bg-emerald-500" : "bg-red-500"
-          }`}
+          disabled={!pnlValid}
+          onClick={submit}
+          className="mt-2 w-full rounded-lg bg-brand py-3 text-sm font-bold text-white transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-40"
         >
-          Place {side} Order
+          Log Trade to Journal
         </button>
+        {!pnlValid && (
+          <p className="mt-2 text-center text-xs text-gray-400">
+            Enter the trade&apos;s Net PnL to log it.
+          </p>
+        )}
       </div>
     </div>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="mb-4 block">
+      <span className="mb-1.5 block text-sm font-medium text-gray-600">{label}</span>
+      {children}
+    </label>
   );
 }
