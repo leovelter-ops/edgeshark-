@@ -12,20 +12,15 @@ import {
   Pencil,
   Trash2,
   Copy,
-  Clock,
 } from "lucide-react";
 import { Plan } from "@/lib/types";
+import RiskWindowPanel from "./RiskWindowPanel";
 
 const dotClass: Record<string, string> = {
   yellow: "bg-yellow-400",
   red: "bg-red-500",
   green: "bg-green-500",
 };
-
-function fmt(n: number | null, opts?: Intl.NumberFormatOptions) {
-  if (n === null || n === undefined) return "—";
-  return n.toLocaleString("en-US", opts);
-}
 
 function SectionLabel({
   icon: Icon,
@@ -62,17 +57,6 @@ export default function PlanDetail({
   useEffect(() => {
     setChecks(plan.entry_criteria.map((c) => c.checked));
   }, [plan]);
-
-  const hasRisk =
-    plan.max_trades_per_day !== null ||
-    plan.max_daily_loss !== null ||
-    plan.max_daily_profit !== null ||
-    plan.risk_per_trade !== null;
-
-  const hasWindow =
-    !!plan.trading_window_start ||
-    !!plan.trading_window_end ||
-    !!plan.block_news_note;
 
   return (
     <div className="rounded-2xl border border-black/5 bg-white p-8 shadow-sm">
@@ -140,7 +124,7 @@ export default function PlanDetail({
         </div>
       )}
 
-      {/* Plan Type + Risk Controls */}
+      {/* Plan Type + Risk Controls (risk/window are read-only, from Settings) */}
       <div className="mt-6 flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <div className="text-sm font-medium text-gray-500">Plan Type</div>
@@ -149,58 +133,9 @@ export default function PlanDetail({
           </div>
         </div>
 
-        {(hasRisk || hasWindow) && (
-          <div className="w-full space-y-5 lg:w-72">
-            {hasRisk && (
-              <div className="rounded-xl border border-rose-100 bg-rose-50/60 p-5">
-                <div className="mb-4 flex items-center justify-between">
-                  <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500">
-                    Risk Controls
-                    <Info size={13} className="text-gray-400" />
-                  </div>
-                  <Pencil size={14} className="cursor-pointer text-gray-400 hover:text-gray-600" />
-                </div>
-                <div className="grid grid-cols-2 gap-y-4 gap-x-6">
-                  <Metric value={fmt(plan.max_trades_per_day)} label="Max trades per day" />
-                  <Metric
-                    value={fmt(plan.max_daily_loss, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    label="Max daily loss"
-                  />
-                  <Metric
-                    value={fmt(plan.max_daily_profit, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    label="Max daily profit"
-                  />
-                  <Metric
-                    value={
-                      plan.risk_per_trade === null
-                        ? "—"
-                        : `${plan.risk_per_trade.toFixed(2)}%`
-                    }
-                    label="Risk per trade"
-                  />
-                </div>
-              </div>
-            )}
-
-            {hasWindow && (
-              <div className="rounded-xl border border-gray-100 bg-white p-5 shadow-sm">
-                <div className="mb-3 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500">
-                  <Clock size={13} className="text-gray-400" />
-                  Trading Window
-                </div>
-                <div className="text-xl font-bold text-gray-900">
-                  {plan.trading_window_start ?? "—"} - {plan.trading_window_end ?? "—"}
-                </div>
-                {plan.block_news_note && (
-                  <>
-                    <div className="mt-3 text-sm text-gray-500">Block News</div>
-                    <p className="mt-1 text-sm text-gray-700">{plan.block_news_note}</p>
-                  </>
-                )}
-              </div>
-            )}
-          </div>
-        )}
+        <div className="w-full lg:w-72">
+          <RiskWindowPanel />
+        </div>
       </div>
 
       {/* Charting Process */}
@@ -292,15 +227,6 @@ export default function PlanDetail({
           <p className="text-gray-400">Not Set</p>
         )}
       </section>
-    </div>
-  );
-}
-
-function Metric({ value, label }: { value: string; label: string }) {
-  return (
-    <div>
-      <div className="text-xl font-bold text-gray-900">{value}</div>
-      <div className="mt-0.5 text-xs text-gray-500">{label}</div>
     </div>
   );
 }

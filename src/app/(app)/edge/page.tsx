@@ -17,8 +17,22 @@ import {
 import { createClient } from "@/lib/supabase/client";
 import { Plan, PlanDraft, planToDraft, emptyDraft } from "@/lib/types";
 import { SAMPLE_PRESETS } from "@/lib/samplePlans";
+import { getActivePlanId, setActivePlan } from "@/lib/activePlan";
 import PlanDetail from "@/components/edge/PlanDetail";
 import PlanEditor from "@/components/edge/PlanEditor";
+
+// "Active" is tracked client-side (localStorage), not in the DB — so it works
+// with or without Supabase and never depends on an `is_active` column existing.
+function withActive(plan: Plan, activeId: string | null): Plan {
+  return { ...plan, is_active: plan.id === activeId };
+}
+
+// Fields sent to Supabase. `is_active` is intentionally omitted (client-only).
+function dbPayload(d: PlanDraft) {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { is_active, ...rest } = d;
+  return rest;
+}
 
 const dotClass: Record<string, string> = {
   yellow: "bg-yellow-400",
@@ -43,19 +57,21 @@ export default function EdgePage() {
 
   useEffect(() => {
     (async () => {
+      const activeId = getActivePlanId();
       const { data, error } = await supabase
         .from("plans")
         .select("*")
         .order("created_at", { ascending: true });
 
       if (error) {
-        setPlans(SAMPLE_PRESETS);
+        setPlans(SAMPLE_PRESETS.map((p) => withActive(p, activeId)));
         setDbConnected(false);
       } else {
         setDbConnected(true);
         const rows = (data as Plan[]) ?? [];
         const hasPresets = rows.some((p) => p.is_preset);
-        setPlans(hasPresets ? rows : [...rows, ...SAMPLE_PRESETS]);
+        const all = hasPresets ? rows : [...rows, ...SAMPLE_PRESETS];
+        setPlans(all.map((p) => withActive(p, activeId)));
       }
       setLoading(false);
     })();
@@ -125,28 +141,32 @@ export default function EdgePage() {
     const payload = toPayload(editing.draft);
     const isExisting = !!editing.id && !editing.id.startsWith("local-");
 
+    const activeId = getActivePlanId();
+
     if (dbConnected) {
       const q = isExisting
-        ? supabase.from("plans").update(payload).eq("id", editing.id!).select().single()
-        : supabase.from("plans").insert(payload).select().single();
+        ? supabase.from("plans").update(dbPayload(payload)).eq("id", editing.id!).select().single()
+        : supabase.from("plans").insert(dbPayload(payload)).select().single();
       const { data, error } = await q;
       if (error || !data) {
         alert(`Could not save plan: ${error?.message ?? "unknown error"}`);
         setSaving(false);
         return;
       }
-      const row = data as Plan;
+      const row = withActive(data as Plan, activeId);
       setPlans((prev) =>
         isExisting ? prev.map((p) => (p.id === row.id ? row : p)) : [...prev, row],
       );
+      if (row.is_active) setActivePlan(row); // keep the active snapshot fresh
       setSelectedId(row.id);
       setEditing(close ? null : { id: row.id, draft: planToDraft(row) });
     } else {
       const id = editing.id ?? `local-${Date.now()}`;
-      const row: Plan = { ...payload, id };
+      const row = withActive({ ...payload, id }, activeId);
       setPlans((prev) =>
         editing.id ? prev.map((p) => (p.id === id ? row : p)) : [...prev, row],
       );
+      if (row.is_active) setActivePlan(row);
       setSelectedId(id);
       setEditing(close ? null : { id, draft: planToDraft(row) });
     }
@@ -174,6 +194,7 @@ export default function EdgePage() {
         return;
       }
     }
+    if (plan.is_active) setActivePlan(null); // deleting the active plan clears it
     setPlans((prev) => prev.filter((p) => p.id !== plan.id));
     if (selectedId === plan.id) setSelectedId(null);
     if (editing?.id === plan.id) setEditing(null);
@@ -188,37 +209,27 @@ export default function EdgePage() {
     };
     const payload = toPayload(draft);
     if (dbConnected) {
-      const { data, error } = await supabase.from("plans").insert(payload).select().single();
+      const { data, error } = await supabase.from("plans").insert(dbPayload(payload)).select().single();
       if (error || !data) {
         alert(`Could not duplicate: ${error?.message ?? "unknown error"}`);
         return;
       }
-      const row = data as Plan;
+      const row = withActive(data as Plan, getActivePlanId());
       setPlans((prev) => [...prev, row]);
       setSelectedId(row.id);
     } else {
-      const row: Plan = { ...payload, id: `local-${Date.now()}` };
+      const row: Plan = { ...payload, id: `local-${Date.now()}`, is_active: false };
       setPlans((prev) => [...prev, row]);
       setSelectedId(row.id);
     }
     setEditing(null);
   }
 
-  async function handleSetActive(plan: Plan, active: boolean) {
-    if (dbConnected && !plan.id.startsWith("local-")) {
-      if (active) {
-        // Only one active plan at a time — clear the current one first.
-        await supabase.from("plans").update({ is_active: false }).eq("is_active", true);
-      }
-      const { error } = await supabase
-        .from("plans")
-        .update({ is_active: active })
-        .eq("id", plan.id);
-      if (error) {
-        alert(`Could not update active state: ${error.message}`);
-        return;
-      }
-    }
+  function handleSetActive(plan: Plan, active: boolean) {
+    // Active state lives in localStorage (only one plan active at a time), so
+    // the Trading page can read it and there's no dependency on a DB column.
+    const nextPlan = active ? { ...plan, is_active: true } : null;
+    setActivePlan(nextPlan);
     setPlans((prev) =>
       prev.map((p) => {
         if (p.id === plan.id) return { ...p, is_active: active };

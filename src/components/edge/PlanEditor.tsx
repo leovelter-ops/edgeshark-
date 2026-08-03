@@ -12,13 +12,11 @@ import {
   Trash2,
   GripVertical,
   ImageIcon,
-  Info,
-  Pencil,
-  Clock,
   CheckCircle,
   Loader2,
 } from "lucide-react";
 import { PlanDraft, DotColor } from "@/lib/types";
+import RiskWindowPanel from "./RiskWindowPanel";
 
 const dotClass: Record<string, string> = {
   yellow: "bg-yellow-400",
@@ -177,10 +175,9 @@ export default function PlanEditor({
           </Section>
         </div>
 
-        {/* Right sidebar cards */}
-        <div className="w-full shrink-0 space-y-5 lg:w-72">
-          <RiskControlsCard value={value} set={set} />
-          <TradingWindowCard value={value} set={set} />
+        {/* Right sidebar cards — risk + window are read-only, from Settings */}
+        <div className="w-full shrink-0 lg:w-72">
+          <RiskWindowPanel />
         </div>
       </div>
 
@@ -360,140 +357,3 @@ function UploadBox({
   );
 }
 
-type SetFn = <K extends keyof PlanDraft>(key: K, v: PlanDraft[K]) => void;
-
-function RiskControlsCard({ value, set }: { value: PlanDraft; set: SetFn }) {
-  const [edit, setEdit] = useState(false);
-  const num = (v: string) => (v === "" ? null : Number(v));
-
-  return (
-    <div className="rounded-xl border border-rose-100 bg-rose-50/60 p-5">
-      <div className="mb-4 flex items-center justify-between">
-        <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500">
-          Risk Controls
-          <Info size={13} className="text-gray-400" />
-        </div>
-        <button onClick={() => setEdit((v) => !v)}>
-          <Pencil size={14} className="text-gray-400 hover:text-gray-600" />
-        </button>
-      </div>
-      {edit ? (
-        <div className="grid grid-cols-2 gap-3">
-          <EditNum label="Max trades / day" val={value.max_trades_per_day} onChange={(v) => set("max_trades_per_day", num(v))} />
-          <EditNum label="Max daily loss" val={value.max_daily_loss} onChange={(v) => set("max_daily_loss", num(v))} />
-          <EditNum label="Max daily profit" val={value.max_daily_profit} onChange={(v) => set("max_daily_profit", num(v))} />
-          <EditNum label="Risk per trade %" val={value.risk_per_trade} onChange={(v) => set("risk_per_trade", num(v))} />
-        </div>
-      ) : (
-        <div className="grid grid-cols-2 gap-y-4 gap-x-6">
-          <Metric value={fmt(value.max_trades_per_day)} label="Max trades per day" />
-          <Metric value={fmt(value.max_daily_loss, 2)} label="Max daily loss" />
-          <Metric value={fmt(value.max_daily_profit, 2)} label="Max daily profit" />
-          <Metric
-            value={value.risk_per_trade === null ? "—" : `${value.risk_per_trade.toFixed(2)}%`}
-            label="Risk per trade"
-          />
-        </div>
-      )}
-    </div>
-  );
-}
-
-function TradingWindowCard({ value, set }: { value: PlanDraft; set: SetFn }) {
-  const [edit, setEdit] = useState(false);
-  return (
-    <div className="rounded-xl border border-gray-100 bg-white p-5 shadow-sm">
-      <div className="mb-3 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500">
-        <Clock size={13} className="text-gray-400" />
-        Trading Window
-      </div>
-
-      {edit ? (
-        <div className="space-y-3">
-          <div className="flex items-center gap-2">
-            <input
-              value={value.trading_window_start ?? ""}
-              onChange={(e) => set("trading_window_start", e.target.value)}
-              placeholder="08:00"
-              className={inputCls}
-            />
-            <span className="text-gray-400">–</span>
-            <input
-              value={value.trading_window_end ?? ""}
-              onChange={(e) => set("trading_window_end", e.target.value)}
-              placeholder="17:00"
-              className={inputCls}
-            />
-          </div>
-          <textarea
-            value={value.block_news_note ?? ""}
-            onChange={(e) => set("block_news_note", e.target.value)}
-            rows={2}
-            placeholder="News-block rule"
-            className={inputCls}
-          />
-          <button
-            onClick={() => setEdit(false)}
-            className="text-xs font-semibold text-brand hover:brightness-110"
-          >
-            Done
-          </button>
-        </div>
-      ) : (
-        <>
-          <div className="text-xl font-bold text-gray-900">
-            {value.trading_window_start ?? "—"} - {value.trading_window_end ?? "—"}
-          </div>
-          <div className="mt-3 flex items-center justify-between">
-            <span className="text-sm text-gray-500">Block News</span>
-            <button onClick={() => setEdit(true)}>
-              <Pencil size={14} className="text-gray-400 hover:text-gray-600" />
-            </button>
-          </div>
-          {value.block_news_note && (
-            <p className="mt-1 text-sm text-gray-700">{value.block_news_note}</p>
-          )}
-        </>
-      )}
-    </div>
-  );
-}
-
-function EditNum({
-  label,
-  val,
-  onChange,
-}: {
-  label: string;
-  val: number | null;
-  onChange: (v: string) => void;
-}) {
-  return (
-    <label className="block">
-      <span className="mb-1 block text-[11px] text-gray-500">{label}</span>
-      <input
-        type="number"
-        value={val ?? ""}
-        onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded-md border border-gray-200 bg-white px-2 py-1.5 text-sm outline-none focus:border-brand"
-      />
-    </label>
-  );
-}
-
-function Metric({ value, label }: { value: string; label: string }) {
-  return (
-    <div>
-      <div className="text-xl font-bold text-gray-900">{value}</div>
-      <div className="mt-0.5 text-xs text-gray-500">{label}</div>
-    </div>
-  );
-}
-
-function fmt(n: number | null, decimals?: number) {
-  if (n === null || n === undefined) return "—";
-  return n.toLocaleString("en-US", {
-    minimumFractionDigits: decimals ?? 0,
-    maximumFractionDigits: decimals ?? 0,
-  });
-}
