@@ -25,6 +25,12 @@ function db() {
   return (_db ??= createClient());
 }
 
+export interface TradeCharts {
+  htf?: string; // scaled data URL
+  mtf?: string;
+  ltf?: string;
+}
+
 export interface JournalTrade {
   id: string;
   symbol: string; // "EURUSD"
@@ -36,22 +42,40 @@ export interface JournalTrade {
   note: string;
   planFollowed: boolean;
   ts: number; // execution time (epoch ms)
+
+  // ---- detail fields (Journal trade-detail view; all optional) ----
+  entryPrice?: number | null;
+  exitPrice?: number | null;
+  stopLoss?: number | null;
+  takeProfit?: number | null;
+  lots?: number | null;
+  session?: string | null;
+  durationMin?: number | null;
+  commission?: number | null;
+  swap?: number | null;
+  planIntended?: string | null;
+  entryConfluences?: string[];
+  tradeManagement?: string | null;
+  mistakes?: string[];
+  entryEmotion?: string | null;
+  exitEmotion?: string | null;
+  charts?: TradeCharts; // omitted from the list cache; loaded via fetchTrade
 }
 
 // ---- row <-> app mappers --------------------------------------------------
 
-interface TradeRow {
-  id: string;
-  symbol: string;
-  flag: string | null;
-  direction: "Buy" | "Sell";
-  net_pnl: number | string;
-  r_multiple: number | string;
-  emotion: string | null;
-  note: string | null;
-  plan_followed: boolean;
-  executed_at: string;
-}
+// Lightweight columns for the list views (calendar, dashboard, trading). Only
+// the base fields — the detail fields + heavy `charts` blob are loaded on demand
+// via fetchTrade(). Keeping this to the 0005 columns also means the list keeps
+// working even before the 0007 detail migration is applied.
+const LIST_COLUMNS =
+  "id,symbol,flag,direction,net_pnl,r_multiple,emotion,note,plan_followed,executed_at";
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+type TradeRow = Record<string, any>;
+
+const num = (v: unknown): number | null =>
+  v === null || v === undefined || v === "" ? null : Number(v);
 
 function rowToTrade(r: TradeRow): JournalTrade {
   return {
@@ -65,23 +89,71 @@ function rowToTrade(r: TradeRow): JournalTrade {
     note: r.note ?? "",
     planFollowed: r.plan_followed,
     ts: new Date(r.executed_at).getTime(),
+    entryPrice: num(r.entry_price),
+    exitPrice: num(r.exit_price),
+    stopLoss: num(r.stop_loss),
+    takeProfit: num(r.take_profit),
+    lots: num(r.lots),
+    session: r.session ?? null,
+    durationMin: num(r.duration_min),
+    commission: num(r.commission),
+    swap: num(r.swap),
+    planIntended: r.plan_intended ?? null,
+    entryConfluences: r.entry_confluences ?? [],
+    tradeManagement: r.trade_management ?? null,
+    mistakes: r.mistakes ?? [],
+    entryEmotion: r.entry_emotion ?? null,
+    exitEmotion: r.exit_emotion ?? null,
+    charts: r.charts ?? undefined,
   };
 }
 
-function tradeToRow(t: JournalTrade) {
-  return {
-    id: t.id,
-    symbol: t.symbol,
-    flag: t.flag,
-    direction: t.direction,
-    net_pnl: t.netPnl,
-    r_multiple: t.rMultiple,
-    emotion: t.emotion,
-    note: t.note,
-    plan_followed: t.planFollowed,
-    executed_at: new Date(t.ts).toISOString(),
-  };
+// App field -> DB column. Used to translate an insert or a partial patch.
+const COLUMN: Record<string, string> = {
+  symbol: "symbol",
+  flag: "flag",
+  direction: "direction",
+  netPnl: "net_pnl",
+  rMultiple: "r_multiple",
+  emotion: "emotion",
+  note: "note",
+  planFollowed: "plan_followed",
+  entryPrice: "entry_price",
+  exitPrice: "exit_price",
+  stopLoss: "stop_loss",
+  takeProfit: "take_profit",
+  lots: "lots",
+  session: "session",
+  durationMin: "duration_min",
+  commission: "commission",
+  swap: "swap",
+  planIntended: "plan_intended",
+  entryConfluences: "entry_confluences",
+  tradeManagement: "trade_management",
+  mistakes: "mistakes",
+  entryEmotion: "entry_emotion",
+  exitEmotion: "exit_emotion",
+  charts: "charts",
+};
+
+/** Map an app-shaped patch to a DB row patch (only the provided keys). */
+function tradePatchToRow(patch: Partial<JournalTrade>): TradeRow {
+  const row: TradeRow = {};
+  for (const [k, v] of Object.entries(patch)) {
+    if (k === "id") continue;
+    if (k === "ts") {
+      row.executed_at = new Date(v as number).toISOString();
+    } else if (COLUMN[k]) {
+      row[COLUMN[k]] = v;
+    }
+  }
+  return row;
 }
+
+function tradeToRow(t: JournalTrade): TradeRow {
+  return { id: t.id, ...tradePatchToRow(t) };
+}
+/* eslint-enable @typescript-eslint/no-explicit-any */
 
 // ---- trades ---------------------------------------------------------------
 
@@ -112,7 +184,7 @@ export async function fetchTrades(): Promise<JournalTrade[]> {
   try {
     const { data, error } = await db()
       .from("trades")
-      .select("*")
+      .select(LIST_COLUMNS)
       .order("executed_at", { ascending: false });
     if (error) throw error;
     const trades = (data as TradeRow[]).map(rowToTrade);
@@ -141,6 +213,40 @@ export async function deleteTrade(id: string): Promise<void> {
     await db().from("trades").delete().eq("id", id);
   } catch {
     /* ignore */
+  }
+}
+
+/** Fetch a single full trade (including chart images) by id. */
+export async function fetchTrade(id: string): Promise<JournalTrade | null> {
+  try {
+    const { data, error } = await db()
+      .from("trades")
+      .select("*")
+      .eq("id", id)
+      .maybeSingle();
+    if (error) throw error;
+    return data ? rowToTrade(data as TradeRow) : null;
+  } catch {
+    // Offline / table missing — fall back to the lightweight cached row.
+    return loadTrades().find((t) => t.id === id) ?? null;
+  }
+}
+
+/**
+ * Patch a trade's detail fields. Updates the list cache optimistically (minus
+ * the heavy `charts` blob) + fires the change event, then persists to Supabase.
+ */
+export async function updateTrade(
+  id: string,
+  patch: Partial<JournalTrade>,
+): Promise<void> {
+  const forCache = { ...patch };
+  delete forCache.charts; // keep the list cache lightweight
+  cacheTrades(loadTrades().map((t) => (t.id === id ? { ...t, ...forCache } : t)));
+  try {
+    await db().from("trades").update(tradePatchToRow(patch)).eq("id", id);
+  } catch {
+    /* stays in cache */
   }
 }
 

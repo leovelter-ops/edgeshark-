@@ -135,6 +135,7 @@ export default function JournalPage() {
           onDelete={(id) => {
             deleteTrade(id);
           }}
+          onOpen={(id) => router.push(`/journal/${id}`)}
           onPrev={() =>
             setSelected(
               new Date(
@@ -401,6 +402,7 @@ function DayDetail({
   unit,
   balance,
   onDelete,
+  onOpen,
   onPrev,
   onNext,
   onToday,
@@ -412,6 +414,7 @@ function DayDetail({
   unit: Unit;
   balance: number;
   onDelete: (id: string) => void;
+  onOpen: (id: string) => void;
   onPrev: () => void;
   onNext: () => void;
   onToday: () => void;
@@ -558,8 +561,12 @@ function DayDetail({
             {rows.map((t) => (
               <div
                 key={t.id}
-                title={t.note || undefined}
-                className="group grid grid-cols-[1.3fr_0.7fr_0.9fr_0.6fr_0.9fr_auto] items-center gap-2 rounded-lg px-1 py-2.5 text-left text-sm transition hover:bg-gray-50"
+                role="button"
+                tabIndex={0}
+                onClick={() => onOpen(t.id)}
+                onKeyDown={(e) => e.key === "Enter" && onOpen(t.id)}
+                title="Open trade detail"
+                className="group grid cursor-pointer grid-cols-[1.3fr_0.7fr_0.9fr_0.6fr_0.9fr_auto] items-center gap-2 rounded-lg px-1 py-2.5 text-left text-sm outline-none transition hover:bg-gray-50 focus:bg-gray-50"
               >
                 <span className="flex items-center gap-2 truncate font-semibold text-gray-800">
                   <span>{t.flag}</span>
@@ -584,7 +591,10 @@ function DayDetail({
                   {fmtUnitShort(t.netPnl, t.rMultiple, unit, balance)}
                 </span>
                 <button
-                  onClick={() => onDelete(t.id)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDelete(t.id);
+                  }}
                   title="Delete trade"
                   className="rounded-md p-1 text-gray-300 opacity-0 transition hover:bg-red-50 hover:text-red-500 group-hover:opacity-100"
                 >
