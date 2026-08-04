@@ -18,13 +18,12 @@ const GoogleIcon = () => (
   </svg>
 );
 
-type Mode = "signin" | "signup";
-
+// Email/password sign-in only. Google and Sign Up are decorative for now — the
+// app is single-user and the account is provisioned manually in Supabase.
 export default function LoginPage() {
   const router = useRouter();
   const supabase = createClient();
 
-  const [mode, setMode] = useState<Mode>("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -32,43 +31,22 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
-  const enter = () => {
-    router.push("/dashboard");
-    router.refresh();
-  };
-
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     setMessage("");
     setLoading(true);
     try {
-      if (mode === "signin") {
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) setError(error.message);
-        else enter();
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) {
+        setError(error.message);
       } else {
-        const { data, error } = await supabase.auth.signUp({
-          email,
-          password,
-          options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
-        });
-        if (error) setError(error.message);
-        else if (data.session) enter();
-        else setMessage("Account created. Check your email to confirm, then sign in.");
+        router.push("/dashboard");
+        router.refresh();
       }
     } finally {
       setLoading(false);
     }
-  };
-
-  const google = async () => {
-    setError("");
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: "google",
-      options: { redirectTo: `${window.location.origin}/auth/callback` },
-    });
-    if (error) setError(error.message);
   };
 
   const reset = async () => {
@@ -110,13 +88,9 @@ export default function LoginPage() {
 
         {/* Card */}
         <div className="liquid-glass rounded-2xl border border-white/20 p-8">
-          <h1 className="text-3xl font-light tracking-tight">
-            {mode === "signin" ? "Welcome back" : "Create your account"}
-          </h1>
+          <h1 className="text-3xl font-light tracking-tight">Welcome back</h1>
           <p className="mt-1 text-sm text-gray-300">
-            {mode === "signin"
-              ? "Sign in to continue to your workspace."
-              : "Start shaping what comes next."}
+            Sign in to continue to your workspace.
           </p>
 
           <form onSubmit={submit} className="mt-6 space-y-4">
@@ -157,17 +131,15 @@ export default function LoginPage() {
               </div>
             </div>
 
-            {mode === "signin" && (
-              <div className="flex items-center justify-end text-sm">
-                <button
-                  type="button"
-                  onClick={reset}
-                  className="text-gray-300 transition-colors hover:text-white hover:underline"
-                >
-                  Reset password
-                </button>
-              </div>
-            )}
+            <div className="flex items-center justify-end text-sm">
+              <button
+                type="button"
+                onClick={reset}
+                className="text-gray-300 transition-colors hover:text-white hover:underline"
+              >
+                Reset password
+              </button>
+            </div>
 
             {error && (
               <p className="rounded-lg border border-red-400/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">
@@ -186,7 +158,7 @@ export default function LoginPage() {
               className="flex w-full items-center justify-center gap-2 rounded-lg bg-white py-3 text-sm font-medium text-black transition-colors hover:bg-gray-100 disabled:opacity-60"
             >
               {loading && <Loader2 size={16} className="animate-spin" />}
-              {mode === "signin" ? "Sign In" : "Create Account"}
+              Sign In
             </button>
           </form>
 
@@ -197,25 +169,24 @@ export default function LoginPage() {
             </span>
           </div>
 
+          {/* Decorative only — not wired to an OAuth provider. */}
           <button
-            onClick={google}
-            className="flex w-full items-center justify-center gap-3 rounded-lg border border-white/20 bg-white/5 py-3 text-sm font-medium text-white transition-colors hover:bg-white/10"
+            type="button"
+            aria-disabled="true"
+            className="flex w-full cursor-default items-center justify-center gap-3 rounded-lg border border-white/20 bg-white/5 py-3 text-sm font-medium text-white/80"
           >
             <GoogleIcon />
             Continue with Google
           </button>
 
           <p className="mt-6 text-center text-sm text-gray-300">
-            {mode === "signin" ? "New here?" : "Already have an account?"}{" "}
+            New here?{" "}
+            {/* Decorative only — sign-up is closed on this single-user app. */}
             <button
-              onClick={() => {
-                setMode(mode === "signin" ? "signup" : "signin");
-                setError("");
-                setMessage("");
-              }}
-              className="font-medium text-white transition-colors hover:underline"
+              type="button"
+              className="cursor-default font-medium text-white/80"
             >
-              {mode === "signin" ? "Create an account" : "Sign in"}
+              Sign Up
             </button>
           </p>
         </div>

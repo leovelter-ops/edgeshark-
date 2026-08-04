@@ -118,7 +118,7 @@ export default function Hero() {
             href="/login"
             className="rounded-lg bg-white px-6 py-2 text-sm font-medium text-black transition-colors hover:bg-gray-100"
           >
-            Start a Chat
+            Log In
           </Link>
         </nav>
 
@@ -127,7 +127,7 @@ export default function Hero() {
           {/* Left */}
           <div>
             <AnimatedHeading
-              text={"Shaping tomorrow\nwith vision and action."}
+              text={"Lions don't negotiate\nwith men"}
               className="mb-4 text-4xl font-normal md:text-5xl lg:text-6xl xl:text-7xl"
               style={{ letterSpacing: "-0.04em" }}
             />
@@ -142,14 +142,15 @@ export default function Hero() {
                   href="/login"
                   className="rounded-lg bg-white px-8 py-3 font-medium text-black transition-colors hover:bg-gray-100"
                 >
-                  Start a Chat
+                  Log In
                 </Link>
-                <Link
-                  href="/login"
-                  className="liquid-glass rounded-lg border border-white/20 px-8 py-3 font-medium text-white transition-colors hover:bg-white hover:text-black"
+                {/* Decorative only — sign-up isn't wired up (single-user app). */}
+                <button
+                  type="button"
+                  className="liquid-glass cursor-default rounded-lg border border-white/20 px-8 py-3 font-medium text-white transition-colors hover:bg-white hover:text-black"
                 >
-                  Explore Now
-                </Link>
+                  Sign Up
+                </button>
               </div>
             </FadeIn>
           </div>

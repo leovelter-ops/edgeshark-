@@ -1,6 +1,7 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import ServiceWorkerRegister from "@/components/ServiceWorkerRegister";
 
 // Runs synchronously during HTML parsing (hard loads) to apply the saved theme
 // before first paint. `text/plain` on the client keeps React from re-executing
@@ -29,8 +30,25 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Edge",
+  title: "VEX",
   description: "Build and refine your trading playbooks — your rules, biases, and edge in one place.",
+  applicationName: "VEX",
+  appleWebApp: {
+    capable: true,
+    title: "VEX",
+    statusBarStyle: "black-translucent",
+  },
+  icons: {
+    icon: "/images/logo.jpg",
+    apple: "/images/logo.jpg",
+  },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#000000",
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
 };
 
 export default function RootLayout({
@@ -47,7 +65,10 @@ export default function RootLayout({
       <head>
         <InlineScript html={THEME_INIT} />
       </head>
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        {children}
+        <ServiceWorkerRegister />
+      </body>
     </html>
   );
 }

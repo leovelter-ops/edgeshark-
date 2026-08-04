@@ -16,6 +16,7 @@ import {
   Sun,
   Moon,
   Settings,
+  Minimize2,
 } from "lucide-react";
 import { applyTheme, getTheme, THEME_EVENT, Theme } from "@/lib/theme";
 
@@ -28,9 +29,6 @@ interface NavItem {
   badge?: string;
 }
 
-// NOTE: the 2nd icon from the original EdgeFlo sidebar (the rising-arrow /
-// candlestick one, directly below the dashboard icon) is intentionally removed
-// per product decision.
 const NAV_ITEMS: NavItem[] = [
   { icon: LayoutDashboard, label: "Dashboard", href: "/dashboard" },
   { icon: CandlestickChart, label: "Trading", href: "/trading" },
@@ -41,27 +39,38 @@ const NAV_ITEMS: NavItem[] = [
   { icon: GraduationCap, label: "Academy", href: "/academy" },
 ];
 
-export default function Sidebar() {
+export default function Sidebar({
+  mobile = false,
+  onNavigate,
+  onMinimize,
+}: {
+  /** Rendered inside the mobile drawer: always expanded, no collapse control. */
+  mobile?: boolean;
+  /** Called when a nav item is tapped (used to close the mobile drawer). */
+  onNavigate?: () => void;
+  /** Desktop-only: collapse the whole app into a floating bubble. */
+  onMinimize?: () => void;
+}) {
   const pathname = usePathname();
-  const [expanded, setExpanded] = useState(false);
+  const [rawExpanded, setRawExpanded] = useState(false);
   const [dark, setDark] = useState(false);
   const [logoOk, setLogoOk] = useState(true);
   const logoRef = useRef<HTMLImageElement>(null);
 
-  // Sync UI state from storage / the DOM after mount (avoids a hydration gap).
+  // In the mobile drawer the sidebar is always fully expanded.
+  const expanded = mobile ? true : rawExpanded;
+
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setDark(getTheme() === "dark");
     try {
-      setExpanded(localStorage.getItem(EXPANDED_KEY) === "1");
+      setRawExpanded(localStorage.getItem(EXPANDED_KEY) === "1");
     } catch {
       /* ignore */
     }
-    // If the logo 404'd before hydration, onError never fires — check directly.
     const img = logoRef.current;
     if (img && img.complete && img.naturalWidth === 0) setLogoOk(false);
 
-    // Stay in sync when the theme is changed elsewhere (e.g. Settings).
     const onThemeChange = (e: Event) =>
       setDark((e as CustomEvent<Theme>).detail === "dark");
     window.addEventListener(THEME_EVENT, onThemeChange);
@@ -69,7 +78,7 @@ export default function Sidebar() {
   }, []);
 
   const toggleExpanded = () => {
-    setExpanded((v) => {
+    setRawExpanded((v) => {
       const next = !v;
       try {
         localStorage.setItem(EXPANDED_KEY, next ? "1" : "0");
@@ -82,7 +91,7 @@ export default function Sidebar() {
 
   const toggleTheme = () => {
     const next: Theme = dark ? "light" : "dark";
-    applyTheme(next); // updates <html>, storage, and fires THEME_EVENT
+    applyTheme(next);
     setDark(next === "dark");
   };
 
@@ -92,81 +101,85 @@ export default function Sidebar() {
         width: expanded ? "15rem" : "4rem",
         minWidth: expanded ? "15rem" : "4rem",
       }}
-      className={`flex shrink-0 flex-col border-r border-black/5 bg-white py-4 transition-[width] duration-200 ${
+      className={`flex h-full shrink-0 flex-col border-r border-black/5 bg-white py-4 transition-[width] duration-200 ${
         expanded ? "px-3" : "items-center"
       }`}
     >
       {/* Logo */}
       <Link
         href="/dashboard"
+        onClick={onNavigate}
         className={`mb-4 flex items-center gap-2.5 ${expanded ? "px-1" : ""}`}
-        title="EdgeFlo"
+        title="VEX"
       >
         {logoOk ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
             ref={logoRef}
             src="/images/logo.jpg"
-            alt="EdgeFlo"
+            alt="VEX"
             className="h-10 w-10 shrink-0 rounded-xl object-contain"
             onError={() => setLogoOk(false)}
           />
         ) : (
           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-[#2563eb] to-[#5b8bff] text-lg font-bold text-white shadow-sm">
-            E
+            V
           </span>
         )}
-        {expanded && (
-          <span className="text-lg font-bold text-gray-900">EdgeFlo</span>
-        )}
+        {expanded && <span className="text-lg font-bold text-gray-900">VEX</span>}
       </Link>
 
       {/* Nav */}
       <nav className={`flex flex-1 flex-col gap-1 ${expanded ? "" : "items-center gap-1.5"}`}>
-        {NAV_ITEMS.map((item) => {
-          const active = item.href ? pathname.startsWith(item.href) : false;
-          return (
-            <SidebarItem
-              key={item.label}
-              item={item}
-              active={active}
-              expanded={expanded}
-            />
-          );
-        })}
+        {NAV_ITEMS.map((item) => (
+          <SidebarItem
+            key={item.label}
+            item={item}
+            active={item.href ? pathname.startsWith(item.href) : false}
+            expanded={expanded}
+            onNavigate={onNavigate}
+          />
+        ))}
       </nav>
 
       {/* Bottom */}
       <div className={`flex flex-col gap-1 ${expanded ? "" : "items-center gap-1.5"}`}>
-        <SidebarButton
-          icon={expanded ? ChevronsLeft : ChevronsRight}
-          label={expanded ? "Collapse" : "Expand"}
-          expanded={expanded}
-          onClick={toggleExpanded}
-        />
+        {!mobile && (
+          <SidebarButton
+            icon={expanded ? ChevronsLeft : ChevronsRight}
+            label={expanded ? "Collapse" : "Expand"}
+            expanded={expanded}
+            onClick={toggleExpanded}
+          />
+        )}
         <SidebarButton
           icon={dark ? Moon : Sun}
           label={`Theme: ${dark ? "Dark" : "Light"}`}
           expanded={expanded}
           onClick={toggleTheme}
         />
+        {!mobile && onMinimize && (
+          <SidebarButton
+            icon={Minimize2}
+            label="Minimize to bubble"
+            expanded={expanded}
+            onClick={onMinimize}
+          />
+        )}
         <SidebarItem
           item={{ icon: Settings, label: "Settings", href: "/settings" }}
           active={pathname.startsWith("/settings")}
           expanded={expanded}
+          onNavigate={onNavigate}
         />
 
         {/* User */}
-        <div
-          className={`mt-1 flex items-center gap-2.5 ${expanded ? "px-1 py-1" : "justify-center"}`}
-        >
+        <div className={`mt-1 flex items-center gap-2.5 ${expanded ? "px-1 py-1" : "justify-center"}`}>
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-gray-700 to-gray-900 text-sm font-semibold text-white">
             L
           </div>
           {expanded && (
-            <span className="truncate text-sm font-medium text-gray-700">
-              Leonardo Velter
-            </span>
+            <span className="truncate text-sm font-medium text-gray-700">Leonardo Velter</span>
           )}
         </div>
       </div>
@@ -174,26 +187,22 @@ export default function Sidebar() {
   );
 }
 
-// ---------------------------------------------------------------------------
-// A nav row that is either a link (has href) or a plain button placeholder.
-// ---------------------------------------------------------------------------
-
 function SidebarItem({
   item,
   active,
   expanded,
+  onNavigate,
 }: {
   item: NavItem;
   active: boolean;
   expanded: boolean;
+  onNavigate?: () => void;
 }) {
   const { icon: Icon, label, href, badge } = item;
   const base = `group relative flex items-center rounded-xl transition ${
     expanded ? "gap-3 px-3 py-2.5" : "h-10 w-10 justify-center"
   } ${
-    active
-      ? "bg-brand-soft text-brand"
-      : "text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+    active ? "bg-brand-soft text-brand" : "text-gray-400 hover:bg-gray-100 hover:text-gray-600"
   }`;
 
   const inner = (
@@ -214,7 +223,7 @@ function SidebarItem({
   );
 
   return href ? (
-    <Link href={href} title={expanded ? undefined : label} className={base}>
+    <Link href={href} onClick={onNavigate} title={expanded ? undefined : label} className={base}>
       {inner}
     </Link>
   ) : (
@@ -224,7 +233,6 @@ function SidebarItem({
   );
 }
 
-// A bottom-row action button (expand/collapse, theme, tutorial).
 function SidebarButton({
   icon: Icon,
   label,
@@ -245,15 +253,12 @@ function SidebarButton({
       }`}
     >
       <Icon size={20} strokeWidth={1.8} className="shrink-0" />
-      {expanded && (
-        <span className="text-sm font-medium text-gray-700">{label}</span>
-      )}
+      {expanded && <span className="text-sm font-medium text-gray-700">{label}</span>}
       {!expanded && <Tooltip label={label} />}
     </button>
   );
 }
 
-// Hover preview shown for collapsed items.
 function Tooltip({ label }: { label: string }) {
   return (
     <span className="pointer-events-none absolute left-full top-1/2 z-50 ml-3 -translate-y-1/2 whitespace-nowrap rounded-md bg-gray-900 px-2.5 py-1.5 text-xs font-medium text-white opacity-0 shadow-lg transition group-hover:opacity-100 dark:bg-gray-700">
