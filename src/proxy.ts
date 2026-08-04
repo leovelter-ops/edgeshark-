@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient } from "@supabase/ssr";
+import { SESSION_MAX_AGE } from "@/lib/supabase/client";
 
 // Public routes (no session required).
 const PUBLIC_PATHS = ["/", "/login", "/auth"];
@@ -17,6 +18,7 @@ export async function proxy(request: NextRequest) {
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
+      cookieOptions: { maxAge: SESSION_MAX_AGE },
       cookies: {
         getAll() {
           return request.cookies.getAll();

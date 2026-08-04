@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
+import { SESSION_MAX_AGE } from "./client";
 
 /**
  * Supabase client for use in Server Components, Route Handlers, and Server Actions.
@@ -11,6 +12,7 @@ export async function createClient() {
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
+      cookieOptions: { maxAge: SESSION_MAX_AGE },
       cookies: {
         getAll() {
           return cookieStore.getAll();
