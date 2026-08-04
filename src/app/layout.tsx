@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Inter, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
 // Runs synchronously during HTML parsing (hard loads) to apply the saved theme
@@ -17,9 +17,10 @@ function InlineScript({ html }: { html: string }) {
 
 const THEME_INIT = `try{if(localStorage.getItem('edgeflo_theme')==='dark'){document.documentElement.classList.add('dark')}}catch(e){}`;
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const inter = Inter({
+  variable: "--font-inter",
   subsets: ["latin"],
+  weight: ["300", "400", "500", "600"],
 });
 
 const geistMono = Geist_Mono({
@@ -41,7 +42,7 @@ export default function RootLayout({
     <html
       lang="en"
       suppressHydrationWarning
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${inter.variable} ${geistMono.variable} h-full antialiased`}
     >
       <head>
         <InlineScript html={THEME_INIT} />

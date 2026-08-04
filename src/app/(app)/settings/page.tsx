@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
 import {
   Pencil,
   LogOut,
@@ -96,9 +98,16 @@ export default function SettingsPage() {
 // ===========================================================================
 
 function AccountTab() {
+  const router = useRouter();
   const [saved, setSaved] = useState<AccountSettings>(DEFAULT_ACCOUNT);
   const [draft, setDraft] = useState<AccountSettings>(DEFAULT_ACCOUNT);
   const [editing, setEditing] = useState(false);
+
+  const logout = async () => {
+    await createClient().auth.signOut();
+    router.push("/login");
+    router.refresh();
+  };
   // Track edit mode in a ref so the settings-change listener (registered once)
   // can avoid overwriting an in-progress edit.
   const editingRef = useRef(editing);
@@ -179,7 +188,10 @@ function AccountTab() {
       <div className="mb-8 flex items-center justify-between">
         <h2 className="text-2xl font-bold text-gray-900">Account</h2>
         <div className="flex items-center gap-2">
-          <button className="flex items-center gap-2 rounded-lg border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-50">
+          <button
+            onClick={logout}
+            className="flex items-center gap-2 rounded-lg border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-50"
+          >
             <LogOut size={15} /> Log out
           </button>
           {editing ? (
