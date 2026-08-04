@@ -16,7 +16,7 @@ import {
   Sun,
   Moon,
   Settings,
-  Minimize2,
+  PictureInPicture2,
 } from "lucide-react";
 import { applyTheme, getTheme, THEME_EVENT, Theme } from "@/lib/theme";
 
@@ -160,8 +160,8 @@ export default function Sidebar({
         />
         {!mobile && onMinimize && (
           <SidebarButton
-            icon={Minimize2}
-            label="Minimize to bubble"
+            icon={PictureInPicture2}
+            label="Float on top"
             expanded={expanded}
             onClick={onMinimize}
           />
