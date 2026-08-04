@@ -28,6 +28,8 @@ import {
   tradesInWeek,
   sumPnl,
   isWin,
+  isLive,
+  closedTrades,
 } from "@/lib/journal";
 
 // ---------------------------------------------------------------------------
@@ -71,9 +73,11 @@ export default function JournalPage() {
   }, []);
   if (!mounted) return null;
 
+  // Stats/calendar count finished trades only; the day list still shows live ones.
+  const closed = closedTrades(trades);
   const isToday = sameDay(selected, today);
   const dayTrades = tradesOnDay(trades, selected);
-  const dayPnl = sumPnl(dayTrades);
+  const dayPnl = sumPnl(closedTrades(dayTrades));
 
   return (
     <div className="min-h-screen px-6 py-6 pb-10">
@@ -101,7 +105,7 @@ export default function JournalPage() {
             cursor={cursor}
             today={today}
             selected={selected}
-            trades={trades}
+            trades={closed}
             unit={unit}
             balance={balance}
             onSelect={setSelected}
@@ -118,9 +122,9 @@ export default function JournalPage() {
 
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             <MonthlySummary
-              trades={tradesInMonth(trades, cursor.getFullYear(), cursor.getMonth())}
+              trades={tradesInMonth(closed, cursor.getFullYear(), cursor.getMonth())}
             />
-            <WeeklyBreakdown trades={tradesInWeek(trades, selected)} />
+            <WeeklyBreakdown trades={tradesInWeek(closed, selected)} />
           </div>
         </div>
 
@@ -422,16 +426,20 @@ function DayDetail({
   const [tab, setTab] = useState<"all" | "wins" | "losses">("all");
   const [query, setQuery] = useState("");
 
-  const wins = trades.filter((t) => isWin(t)).length;
-  const losses = trades.length - wins;
-  const winRate = trades.length ? (wins / trades.length) * 100 : 0;
-  const avgR = trades.length
-    ? trades.reduce((s, t) => s + t.rMultiple, 0) / trades.length
+  // Stats only over finished trades; the list still shows live ones.
+  const done = closedTrades(trades);
+  const wins = done.filter((t) => isWin(t)).length;
+  const losses = done.length - wins;
+  const winRate = done.length ? (wins / done.length) * 100 : 0;
+  const avgR = done.length
+    ? done.reduce((s, t) => s + t.rMultiple, 0) / done.length
     : 0;
-  const planFollowed = trades.length > 0 && trades.every((t) => t.planFollowed);
+  const planFollowed = done.length > 0 && done.every((t) => t.planFollowed);
 
   const rows = trades
-    .filter((t) => (tab === "wins" ? isWin(t) : tab === "losses" ? !isWin(t) : true))
+    .filter((t) =>
+      tab === "wins" ? !isLive(t) && isWin(t) : tab === "losses" ? !isLive(t) && !isWin(t) : true,
+    )
     .filter((t) => t.symbol.toLowerCase().includes(query.toLowerCase()))
     .sort((a, b) => b.ts - a.ts);
 
@@ -496,7 +504,7 @@ function DayDetail({
 
       {/* Totals */}
       <div className="mt-5 grid grid-cols-3 gap-3 border-t border-gray-100 pt-4">
-        <StatSmall label="Total Trades" value={<>{trades.length}</>} />
+        <StatSmall label="Total Trades" value={<>{done.length}</>} />
         <StatSmall label="Wins" value={<span className="text-emerald-500">{wins}</span>} />
         <StatSmall label="Losses" value={<span className="text-red-500">{losses}</span>} />
       </div>
@@ -571,6 +579,12 @@ function DayDetail({
                 <span className="flex items-center gap-2 truncate font-semibold text-gray-800">
                   <span>{t.flag}</span>
                   {t.symbol}
+                  {isLive(t) && (
+                    <span className="flex items-center gap-1 rounded bg-amber-50 px-1 py-0.5 text-[9px] font-bold uppercase text-amber-500">
+                      <span className="h-1 w-1 animate-pulse rounded-full bg-amber-500" />
+                      Live
+                    </span>
+                  )}
                 </span>
                 <span className="text-gray-500">{hhmm(t.ts)}</span>
                 <span
@@ -582,14 +596,20 @@ function DayDetail({
                 >
                   {t.direction === "Buy" ? "↑" : "↓"} {t.direction}
                 </span>
-                <span className="text-base">{t.emotion || "—"}</span>
-                <span
-                  className={`text-right font-semibold ${
-                    t.netPnl < 0 ? "text-red-500" : "text-emerald-500"
-                  }`}
-                >
-                  {fmtUnitShort(t.netPnl, t.rMultiple, unit, balance)}
+                <span className="truncate text-xs text-gray-500">
+                  {t.entryEmotion || t.emotion || "—"}
                 </span>
+                {isLive(t) ? (
+                  <span className="text-right text-xs font-bold uppercase text-amber-500">Live</span>
+                ) : (
+                  <span
+                    className={`text-right font-semibold ${
+                      t.netPnl < 0 ? "text-red-500" : "text-emerald-500"
+                    }`}
+                  >
+                    {fmtUnitShort(t.netPnl, t.rMultiple, unit, balance)}
+                  </span>
+                )}
                 <button
                   onClick={(e) => {
                     e.stopPropagation();

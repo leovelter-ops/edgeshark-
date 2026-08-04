@@ -20,6 +20,8 @@ import {
   fetchStartingBalance,
   sumPnl,
   isWin,
+  isLive,
+  closedTrades,
   tradesOnDay,
 } from "@/lib/journal";
 import {
@@ -118,10 +120,12 @@ export default function DashboardPage() {
   if (!mounted) return null;
 
   // ---- derived metrics -----------------------------------------------------
+  // Stats only count finished trades; live ones are in-progress.
+  const closed = closedTrades(trades);
   const start = rangeStart(range);
-  const inRange = trades.filter((t) => t.ts >= start);
+  const inRange = closed.filter((t) => t.ts >= start);
 
-  const accountBalance = balance + sumPnl(trades); // current, all-time
+  const accountBalance = balance + sumPnl(closed); // current, all-time
   const rangePnl = sumPnl(inRange);
   const wins = inRange.filter(isWin);
   const losses = inRange.filter((t) => !isWin(t));
@@ -134,7 +138,8 @@ export default function DashboardPage() {
   const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? Infinity : 0;
 
   const today = new Date();
-  const todayTrades = tradesOnDay(trades, today);
+  const todayAll = tradesOnDay(trades, today); // started today (for the count)
+  const todayClosedPnl = sumPnl(closedTrades(todayAll));
   const dayKey = routineDayKey(routine.resetTime, account.timezone);
   const routineDone =
     premarket.day === dayKey && Array.isArray(premarket.completed)
@@ -142,7 +147,7 @@ export default function DashboardPage() {
       : 0;
 
   // Equity curve: baseline (balance + PnL before the range) then each trade.
-  const before = trades.filter((t) => t.ts < start);
+  const before = closed.filter((t) => t.ts < start);
   const ordered = inRange.slice().sort((a, b) => a.ts - b.ts);
   const baseline = balance + sumPnl(before);
   const curve: { v: number; ts: number }[] = [{ v: baseline, ts: start || (ordered[0]?.ts ?? today.getTime()) }];
@@ -222,13 +227,13 @@ export default function DashboardPage() {
 
         {/* Right: edge score + discipline summary */}
         <div className="space-y-4">
-          <EdgeScore closed={trades.length} required={30} />
+          <EdgeScore closed={closed.length} required={30} />
           <DisciplineSummary
             maxTrades={prefs.maxTradesPerDay}
-            tradesToday={todayTrades.length}
+            tradesToday={todayAll.length}
             windowStart={prefs.windowStart}
             windowEnd={prefs.windowEnd}
-            closedPnl={sumPnl(todayTrades)}
+            closedPnl={todayClosedPnl}
             maxLoss={prefs.maxDailyLoss}
             maxProfit={prefs.maxDailyProfit}
           />
@@ -443,15 +448,21 @@ function RecentTrades({ trades }: { trades: JournalTrade[] }) {
                 {t.direction === "Buy" ? "↑" : "↓"} {t.direction}
               </span>
               <span className="text-right tabular-nums text-gray-500">
-                {t.rMultiple ? `${t.rMultiple > 0 ? "+" : ""}${t.rMultiple}R` : "—"}
+                {isLive(t) ? "—" : t.rMultiple ? `${t.rMultiple > 0 ? "+" : ""}${t.rMultiple}R` : "—"}
               </span>
-              <span
-                className={`text-right font-semibold tabular-nums ${
-                  t.netPnl < 0 ? "text-red-500" : "text-emerald-500"
-                }`}
-              >
-                {fmtMoney(t.netPnl)}
-              </span>
+              {isLive(t) ? (
+                <span className="flex items-center justify-end gap-1 text-right text-xs font-bold uppercase text-amber-500">
+                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" /> Live
+                </span>
+              ) : (
+                <span
+                  className={`text-right font-semibold tabular-nums ${
+                    t.netPnl < 0 ? "text-red-500" : "text-emerald-500"
+                  }`}
+                >
+                  {fmtMoney(t.netPnl)}
+                </span>
+              )}
             </div>
           ))}
         </div>

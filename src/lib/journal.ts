@@ -31,17 +31,35 @@ export interface TradeCharts {
   ltf?: string;
 }
 
+// Shared emotion vocabulary for entry/exit emotion (Start/Finish + detail view).
+export const EMOTIONS = [
+  "Focused",
+  "Calm",
+  "Confident",
+  "Disciplined",
+  "Anxious",
+  "Fearful",
+  "Greedy",
+  "FOMO",
+  "Frustrated",
+  "Excited",
+  "Bored",
+];
+
+export type TradeStatus = "live" | "closed";
+
 export interface JournalTrade {
   id: string;
   symbol: string; // "EURUSD"
   flag: string; // emoji
   direction: "Buy" | "Sell";
-  netPnl: number; // realized $, sign = win/loss
+  status: TradeStatus; // "live" once started, "closed" once finished
+  netPnl: number; // realized $, sign = win/loss (0 while live)
   rMultiple: number; // R multiple (0 if unknown)
-  emotion: string; // "" or an emoji
+  emotion: string; // legacy single emotion; entry/exit live in the fields below
   note: string;
   planFollowed: boolean;
-  ts: number; // execution time (epoch ms)
+  ts: number; // start/execution time (epoch ms)
 
   // ---- detail fields (Journal trade-detail view; all optional) ----
   entryPrice?: number | null;
@@ -83,6 +101,7 @@ function rowToTrade(r: TradeRow): JournalTrade {
     symbol: r.symbol,
     flag: r.flag ?? "",
     direction: r.direction,
+    status: r.status === "live" ? "live" : "closed",
     netPnl: Number(r.net_pnl),
     rMultiple: Number(r.r_multiple),
     emotion: r.emotion ?? "",
@@ -113,6 +132,7 @@ const COLUMN: Record<string, string> = {
   symbol: "symbol",
   flag: "flag",
   direction: "direction",
+  status: "status",
   netPnl: "net_pnl",
   rMultiple: "r_multiple",
   emotion: "emotion",
@@ -291,6 +311,15 @@ export async function saveStartingBalance(n: number): Promise<void> {
 
 export function isWin(t: JournalTrade): boolean {
   return t.netPnl >= 0;
+}
+
+export function isLive(t: JournalTrade): boolean {
+  return t.status === "live";
+}
+
+/** Only finished trades — the ones that count toward performance stats. */
+export function closedTrades(trades: JournalTrade[]): JournalTrade[] {
+  return trades.filter((t) => t.status !== "live");
 }
 
 // ---- date helpers ---------------------------------------------------------

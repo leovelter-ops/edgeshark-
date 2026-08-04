@@ -16,6 +16,7 @@ import { fmtMoney } from "@/lib/trading";
 import {
   JournalTrade,
   TradeCharts,
+  EMOTIONS,
   fetchTrade,
   updateTrade,
   loadTrades,
@@ -25,20 +26,7 @@ import { fileToScaledDataUrl } from "@/lib/academy";
 import { createClient } from "@/lib/supabase/client";
 
 const SESSIONS = ["", "London", "New York", "Asia", "Sydney", "London/NY Overlap"];
-const EMOTIONS = [
-  "",
-  "Focused",
-  "Calm",
-  "Confident",
-  "Disciplined",
-  "Anxious",
-  "Fearful",
-  "Greedy",
-  "FOMO",
-  "Frustrated",
-  "Excited",
-  "Bored",
-];
+const EMOTION_OPTS = ["", ...EMOTIONS];
 
 type Status = "saved" | "unsaved" | "saving";
 
@@ -152,6 +140,15 @@ export default function TradeDetailPage() {
           </span>
           <span className="text-gray-300">·</span>
           <span className="text-gray-600">{dateLong}</span>
+          {t.status === "live" ? (
+            <span className="ml-1 flex items-center gap-1 rounded-md bg-amber-50 px-2 py-0.5 text-xs font-bold uppercase text-amber-500">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" /> Live
+            </span>
+          ) : (
+            <span className="ml-1 rounded-md bg-gray-100 px-2 py-0.5 text-xs font-semibold uppercase text-gray-500">
+              Closed
+            </span>
+          )}
         </h1>
         <div className="flex items-center gap-2">
           <NavBtn
@@ -643,8 +640,8 @@ function Review({
           <Select
             value={t.entryEmotion ?? ""}
             onChange={(v) => patch({ entryEmotion: v || null })}
-            options={EMOTIONS}
-            labels={EMOTIONS.map((e) => e || "—")}
+            options={EMOTION_OPTS}
+            labels={EMOTION_OPTS.map((e) => e || "—")}
             full
           />
         </div>
@@ -653,8 +650,8 @@ function Review({
           <Select
             value={t.exitEmotion ?? ""}
             onChange={(v) => patch({ exitEmotion: v || null })}
-            options={EMOTIONS}
-            labels={EMOTIONS.map((e) => e || "—")}
+            options={EMOTION_OPTS}
+            labels={EMOTION_OPTS.map((e) => e || "—")}
             full
           />
         </div>

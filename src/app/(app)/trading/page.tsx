@@ -68,17 +68,19 @@ import {
   fetchStartingBalance,
   saveStartingBalance,
   addTrade,
+  updateTrade,
   deleteTrade,
   tradesOnDay,
   sumPnl,
+  isLive,
+  EMOTIONS,
 } from "@/lib/journal";
 import { Plan } from "@/lib/types";
 import { getActivePlan, ACTIVE_PLAN_EVENT } from "@/lib/activePlan";
 
-const EMOTIONS = ["😌", "🤩", "😏", "😀", "🚀", "😰", "😡"];
-
 export default function TradingPage() {
-  const [logOpen, setLogOpen] = useState(false);
+  const [startOpen, setStartOpen] = useState(false);
+  const [finishing, setFinishing] = useState<JournalTrade | null>(null);
   const [selected, setSelected] = useState<Instrument>(INSTRUMENTS[0]);
   const [trades, setTrades] = useState<JournalTrade[]>([]);
   const [balance, setBalance] = useState<number>(0);
@@ -129,9 +131,13 @@ export default function TradingPage() {
   const saveBalance = (n: number) => {
     saveStartingBalance(n);
   };
-  const logTrade = (t: JournalTrade) => {
+  const startTrade = (t: JournalTrade) => {
     addTrade(t);
-    setLogOpen(false);
+    setStartOpen(false);
+  };
+  const finishTrade = (id: string, patch: Partial<JournalTrade>) => {
+    updateTrade(id, { ...patch, status: "closed" });
+    setFinishing(null);
   };
   const removeTrade = (id: string) => {
     deleteTrade(id);
@@ -167,10 +173,10 @@ export default function TradingPage() {
             <Zap size={18} />
           </button>
           <button
-            onClick={() => setLogOpen(true)}
+            onClick={() => setStartOpen(true)}
             className="flex items-center gap-2 rounded-lg bg-brand px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-105"
           >
-            <Plus size={16} /> Log Trade
+            <Plus size={16} /> Start a Trade
           </button>
           <button className="text-gray-300 hover:text-gray-500">
             <ChevronsRight size={20} />
@@ -196,16 +202,28 @@ export default function TradingPage() {
         <Watchlist selected={selected} onSelect={setSelected} />
       </div>
 
-      {/* Today's logged trades */}
+      {/* Today's trades */}
       <div className="mt-4">
-        <TodayTrades trades={todayTrades} onDelete={removeTrade} onLog={() => setLogOpen(true)} />
+        <TodayTrades
+          trades={todayTrades}
+          onDelete={removeTrade}
+          onStart={() => setStartOpen(true)}
+          onFinish={(t) => setFinishing(t)}
+        />
       </div>
 
-      {logOpen && (
-        <LogTradeModal
+      {startOpen && (
+        <StartTradeModal
           instrument={selected}
-          onLog={logTrade}
-          onClose={() => setLogOpen(false)}
+          onStart={startTrade}
+          onClose={() => setStartOpen(false)}
+        />
+      )}
+      {finishing && (
+        <FinishTradeModal
+          trade={finishing}
+          onFinish={finishTrade}
+          onClose={() => setFinishing(null)}
         />
       )}
     </div>
@@ -609,40 +627,48 @@ function RoutineChecklist({
 function TodayTrades({
   trades,
   onDelete,
-  onLog,
+  onStart,
+  onFinish,
 }: {
   trades: JournalTrade[];
   onDelete: (id: string) => void;
-  onLog: () => void;
+  onStart: () => void;
+  onFinish: (t: JournalTrade) => void;
 }) {
+  const liveCount = trades.filter(isLive).length;
   return (
     <div className="rounded-2xl border border-black/5 bg-white p-6 shadow-sm">
       <div className="mb-4 flex items-center justify-between">
         <div className="flex items-baseline gap-2">
           <h3 className="text-lg font-bold text-gray-900">Today&apos;s Trades</h3>
-          <span className="text-sm text-gray-400">
-            Logged to your Journal calendar
-          </span>
+          {liveCount > 0 ? (
+            <span className="flex items-center gap-1.5 text-sm font-semibold text-amber-500">
+              <span className="h-2 w-2 animate-pulse rounded-full bg-amber-500" />
+              {liveCount} live
+            </span>
+          ) : (
+            <span className="text-sm text-gray-400">Logged to your Journal</span>
+          )}
         </div>
         <button
-          onClick={onLog}
+          onClick={onStart}
           className="flex items-center gap-1.5 rounded-lg border border-brand/30 bg-brand-soft px-3 py-1.5 text-sm font-semibold text-brand transition hover:brightness-105"
         >
-          <Plus size={15} /> Log Trade
+          <Plus size={15} /> Start a Trade
         </button>
       </div>
 
       {trades.length === 0 ? (
         <div className="py-16 text-center text-gray-400">
-          No trades logged today. Hit{" "}
-          <span className="font-semibold text-brand">Log Trade</span> to record
-          one.
+          No trades today. Hit{" "}
+          <span className="font-semibold text-brand">Start a Trade</span> to
+          begin one.
         </div>
       ) : (
         <>
           <div className="grid grid-cols-[1.4fr_0.9fr_0.7fr_0.7fr_1fr_auto] gap-3 border-b border-gray-100 px-2 pb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">
             <span>Instrument</span>
-            <span>Time</span>
+            <span>Started</span>
             <span>Direction</span>
             <span className="text-right">R</span>
             <span className="text-right">Net PnL</span>
@@ -652,50 +678,68 @@ function TodayTrades({
             {trades
               .slice()
               .sort((a, b) => b.ts - a.ts)
-              .map((t) => (
-                <div
-                  key={t.id}
-                  className="grid grid-cols-[1.4fr_0.9fr_0.7fr_0.7fr_1fr_auto] items-center gap-3 rounded-lg px-2 py-3 text-sm transition hover:bg-gray-50"
-                >
-                  <span className="flex items-center gap-2 truncate font-semibold text-gray-800">
-                    <span>{t.flag}</span>
-                    {t.symbol}
-                    {t.emotion && <span className="text-base">{t.emotion}</span>}
-                  </span>
-                  <span className="text-gray-500">
-                    {new Date(t.ts).toLocaleTimeString(undefined, {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
-                  </span>
-                  <span
-                    className={
-                      t.direction === "Buy"
-                        ? "font-semibold text-emerald-500"
-                        : "font-semibold text-red-500"
-                    }
+              .map((t) => {
+                const live = isLive(t);
+                return (
+                  <div
+                    key={t.id}
+                    className="grid grid-cols-[1.4fr_0.9fr_0.7fr_0.7fr_1fr_auto] items-center gap-3 rounded-lg px-2 py-3 text-sm transition hover:bg-gray-50"
                   >
-                    {t.direction === "Buy" ? "↑" : "↓"} {t.direction}
-                  </span>
-                  <span className="text-right tabular-nums text-gray-500">
-                    {t.rMultiple ? `${t.rMultiple > 0 ? "+" : ""}${t.rMultiple}R` : "—"}
-                  </span>
-                  <span
-                    className={`text-right font-semibold tabular-nums ${
-                      t.netPnl < 0 ? "text-red-500" : "text-emerald-500"
-                    }`}
-                  >
-                    {fmtMoney(t.netPnl)}
-                  </span>
-                  <button
-                    onClick={() => onDelete(t.id)}
-                    title="Delete trade"
-                    className="rounded-md p-1.5 text-gray-300 transition hover:bg-red-50 hover:text-red-500"
-                  >
-                    <Trash2 size={15} />
-                  </button>
-                </div>
-              ))}
+                    <span className="flex items-center gap-2 truncate font-semibold text-gray-800">
+                      <span>{t.flag}</span>
+                      {t.symbol}
+                      {live && (
+                        <span className="flex items-center gap-1 rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold uppercase text-amber-500">
+                          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />
+                          Live
+                        </span>
+                      )}
+                    </span>
+                    <span className="text-gray-500">
+                      {new Date(t.ts).toLocaleTimeString(undefined, {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </span>
+                    <span
+                      className={
+                        t.direction === "Buy"
+                          ? "font-semibold text-emerald-500"
+                          : "font-semibold text-red-500"
+                      }
+                    >
+                      {t.direction === "Buy" ? "↑" : "↓"} {t.direction}
+                    </span>
+                    <span className="text-right tabular-nums text-gray-500">
+                      {live ? "—" : t.rMultiple ? `${t.rMultiple > 0 ? "+" : ""}${t.rMultiple}R` : "—"}
+                    </span>
+                    <span
+                      className={`text-right font-semibold tabular-nums ${
+                        live ? "text-gray-300" : t.netPnl < 0 ? "text-red-500" : "text-emerald-500"
+                      }`}
+                    >
+                      {live ? "—" : fmtMoney(t.netPnl)}
+                    </span>
+                    <span className="flex items-center justify-end gap-1">
+                      {live && (
+                        <button
+                          onClick={() => onFinish(t)}
+                          className="rounded-md bg-brand px-2.5 py-1 text-xs font-semibold text-white transition hover:brightness-105"
+                        >
+                          Finish
+                        </button>
+                      )}
+                      <button
+                        onClick={() => onDelete(t.id)}
+                        title="Delete trade"
+                        className="rounded-md p-1.5 text-gray-300 transition hover:bg-red-50 hover:text-red-500"
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    </span>
+                  </div>
+                );
+              })}
           </div>
         </>
       )}
@@ -1068,198 +1112,361 @@ function PlanSection({
 }
 
 // ===========================================================================
-// Log trade form
+// Start / Finish trade forms
 // ===========================================================================
 
-/** Format a Date as the value a datetime-local input expects (local time). */
-function toLocalInput(d: Date): string {
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+// Text-chip picker for the shared emotion vocabulary.
+function EmotionChips({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {EMOTIONS.map((e) => (
+        <button
+          key={e}
+          onClick={() => onChange(value === e ? "" : e)}
+          className={`rounded-lg border px-2.5 py-1 text-xs font-medium transition ${
+            value === e
+              ? "border-brand bg-brand-soft text-brand"
+              : "border-gray-200 text-gray-600 hover:bg-gray-50"
+          }`}
+        >
+          {e}
+        </button>
+      ))}
+    </div>
+  );
 }
 
-function LogTradeModal({
-  instrument,
-  onLog,
+function ModalShell({
+  title,
+  subtitle,
   onClose,
+  children,
 }: {
-  instrument: Instrument;
-  onLog: (t: JournalTrade) => void;
+  title: string;
+  subtitle: string;
   onClose: () => void;
+  children: React.ReactNode;
 }) {
-  const [symbol, setSymbol] = useState(instrument.symbol);
-  const [direction, setDirection] = useState<"Buy" | "Sell">("Buy");
-  const [pnl, setPnl] = useState("");
-  const [rMultiple, setRMultiple] = useState("");
-  const [emotion, setEmotion] = useState("");
-  const [planFollowed, setPlanFollowed] = useState(true);
-  const [note, setNote] = useState("");
-  const [when, setWhen] = useState(() => toLocalInput(new Date()));
-
-  const inst = INSTRUMENTS.find((i) => i.symbol === symbol) ?? instrument;
-  const pnlValid = pnl.trim() !== "" && !Number.isNaN(Number(pnl));
-
-  const submit = () => {
-    if (!pnlValid) return;
-    const ts = when ? new Date(when).getTime() : Date.now();
-    onLog({
-      id: crypto.randomUUID(),
-      symbol: inst.symbol,
-      flag: inst.flag,
-      direction,
-      netPnl: Number(pnl),
-      rMultiple: rMultiple.trim() === "" ? 0 : Number(rMultiple),
-      emotion,
-      note: note.trim(),
-      planFollowed,
-      ts: Number.isNaN(ts) ? Date.now() : ts,
-    });
-  };
-
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/30 p-4 pt-16 backdrop-blur-sm">
       <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
         <div className="mb-5 flex items-center justify-between">
           <div>
-            <h2 className="text-lg font-bold text-gray-900">Log a Trade</h2>
-            <p className="text-sm text-gray-500">Records to your Journal calendar.</p>
+            <h2 className="text-lg font-bold text-gray-900">{title}</h2>
+            <p className="text-sm text-gray-500">{subtitle}</p>
           </div>
           <button onClick={onClose} className="rounded p-1 text-gray-400 hover:bg-gray-100">
             <X size={18} />
           </button>
         </div>
-
-        {/* Instrument */}
-        <Field label="Instrument">
-          <div className="relative">
-            <select
-              value={symbol}
-              onChange={(e) => setSymbol(e.target.value)}
-              className="w-full appearance-none rounded-lg border border-gray-200 bg-white px-3 py-2.5 pr-8 text-sm text-gray-800 outline-none focus:border-brand"
-            >
-              {INSTRUMENTS.map((i) => (
-                <option key={i.symbol} value={i.symbol}>
-                  {i.flag} {i.symbol} — {i.name}
-                </option>
-              ))}
-            </select>
-            <ChevronDown
-              size={15}
-              className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400"
-            />
-          </div>
-        </Field>
-
-        {/* Direction */}
-        <Field label="Direction">
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              onClick={() => setDirection("Sell")}
-              className={`rounded-lg py-2.5 text-sm font-bold transition ${
-                direction === "Sell" ? "bg-red-500 text-white" : "bg-red-50 text-red-500"
-              }`}
-            >
-              ↓ Sell
-            </button>
-            <button
-              onClick={() => setDirection("Buy")}
-              className={`rounded-lg py-2.5 text-sm font-bold transition ${
-                direction === "Buy" ? "bg-emerald-500 text-white" : "bg-emerald-50 text-emerald-600"
-              }`}
-            >
-              ↑ Buy
-            </button>
-          </div>
-        </Field>
-
-        {/* PnL + R */}
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Net PnL ($)">
-            <input
-              type="number"
-              step="0.01"
-              value={pnl}
-              onChange={(e) => setPnl(e.target.value)}
-              placeholder="e.g. -250 or 500"
-              className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
-            />
-          </Field>
-          <Field label="R multiple (optional)">
-            <input
-              type="number"
-              step="0.1"
-              value={rMultiple}
-              onChange={(e) => setRMultiple(e.target.value)}
-              placeholder="e.g. 2 or -1"
-              className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
-            />
-          </Field>
-        </div>
-
-        {/* Date/time */}
-        <Field label="Date & time">
-          <input
-            type="datetime-local"
-            value={when}
-            onChange={(e) => setWhen(e.target.value)}
-            className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm text-gray-800 outline-none focus:border-brand"
-          />
-        </Field>
-
-        {/* Emotion */}
-        <Field label="Emotion (optional)">
-          <div className="flex gap-1.5">
-            {EMOTIONS.map((e) => (
-              <button
-                key={e}
-                onClick={() => setEmotion(emotion === e ? "" : e)}
-                className={`flex h-9 w-9 items-center justify-center rounded-lg border text-lg transition ${
-                  emotion === e
-                    ? "border-brand bg-brand-soft"
-                    : "border-gray-200 hover:bg-gray-50"
-                }`}
-              >
-                {e}
-              </button>
-            ))}
-          </div>
-        </Field>
-
-        {/* Plan followed */}
-        <label className="mb-4 flex items-center gap-2 text-sm font-medium text-gray-700">
-          <input
-            type="checkbox"
-            checked={planFollowed}
-            onChange={(e) => setPlanFollowed(e.target.checked)}
-            className="h-4 w-4 accent-brand"
-          />
-          I followed my trade plan
-        </label>
-
-        {/* Note */}
-        <Field label="Note (optional)">
-          <textarea
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            rows={2}
-            placeholder="What happened on this trade?"
-            className="w-full resize-none rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
-          />
-        </Field>
-
-        <button
-          disabled={!pnlValid}
-          onClick={submit}
-          className="mt-2 w-full rounded-lg bg-brand py-3 text-sm font-bold text-white transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          Log Trade to Journal
-        </button>
-        {!pnlValid && (
-          <p className="mt-2 text-center text-xs text-gray-400">
-            Enter the trade&apos;s Net PnL to log it.
-          </p>
-        )}
+        {children}
       </div>
     </div>
+  );
+}
+
+function DirectionToggle({
+  direction,
+  onChange,
+}: {
+  direction: "Buy" | "Sell";
+  onChange: (d: "Buy" | "Sell") => void;
+}) {
+  return (
+    <div className="grid grid-cols-2 gap-2">
+      <button
+        onClick={() => onChange("Sell")}
+        className={`rounded-lg py-2.5 text-sm font-bold transition ${
+          direction === "Sell" ? "bg-red-500 text-white" : "bg-red-50 text-red-500"
+        }`}
+      >
+        ↓ Sell
+      </button>
+      <button
+        onClick={() => onChange("Buy")}
+        className={`rounded-lg py-2.5 text-sm font-bold transition ${
+          direction === "Buy" ? "bg-emerald-500 text-white" : "bg-emerald-50 text-emerald-600"
+        }`}
+      >
+        ↑ Buy
+      </button>
+    </div>
+  );
+}
+
+const numOrNull = (s: string): number | null =>
+  s.trim() === "" || Number.isNaN(Number(s)) ? null : Number(s);
+
+// ---- Start a trade (entry) -------------------------------------------------
+
+function StartTradeModal({
+  instrument,
+  onStart,
+  onClose,
+}: {
+  instrument: Instrument;
+  onStart: (t: JournalTrade) => void;
+  onClose: () => void;
+}) {
+  const [symbol, setSymbol] = useState(instrument.symbol);
+  const [direction, setDirection] = useState<"Buy" | "Sell">("Buy");
+  const [entryPrice, setEntryPrice] = useState("");
+  const [lots, setLots] = useState("");
+  const [stopLoss, setStopLoss] = useState("");
+  const [takeProfit, setTakeProfit] = useState("");
+  const [entryEmotion, setEntryEmotion] = useState("");
+  const [planFollowed, setPlanFollowed] = useState(true);
+  const [note, setNote] = useState("");
+
+  const inst = INSTRUMENTS.find((i) => i.symbol === symbol) ?? instrument;
+
+  const start = () => {
+    onStart({
+      id: crypto.randomUUID(),
+      symbol: inst.symbol,
+      flag: inst.flag,
+      direction,
+      status: "live",
+      netPnl: 0,
+      rMultiple: 0,
+      emotion: "",
+      note: note.trim(),
+      planFollowed,
+      ts: Date.now(),
+      entryPrice: numOrNull(entryPrice),
+      lots: numOrNull(lots),
+      stopLoss: numOrNull(stopLoss),
+      takeProfit: numOrNull(takeProfit),
+      entryEmotion: entryEmotion || null,
+    });
+  };
+
+  return (
+    <ModalShell
+      title="Start a Trade"
+      subtitle="Capture your entry mindset. Finish it when you close."
+      onClose={onClose}
+    >
+      <Field label="Instrument">
+        <div className="relative">
+          <select
+            value={symbol}
+            onChange={(e) => setSymbol(e.target.value)}
+            className="w-full appearance-none rounded-lg border border-gray-200 bg-white px-3 py-2.5 pr-8 text-sm text-gray-800 outline-none focus:border-brand"
+          >
+            {INSTRUMENTS.map((i) => (
+              <option key={i.symbol} value={i.symbol}>
+                {i.flag} {i.symbol} — {i.name}
+              </option>
+            ))}
+          </select>
+          <ChevronDown
+            size={15}
+            className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400"
+          />
+        </div>
+      </Field>
+
+      <Field label="Direction">
+        <DirectionToggle direction={direction} onChange={setDirection} />
+      </Field>
+
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Entry price (optional)">
+          <input
+            type="number"
+            step="0.00001"
+            value={entryPrice}
+            onChange={(e) => setEntryPrice(e.target.value)}
+            placeholder="1.05000"
+            className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+          />
+        </Field>
+        <Field label="Lots (optional)">
+          <input
+            type="number"
+            step="0.01"
+            value={lots}
+            onChange={(e) => setLots(e.target.value)}
+            placeholder="0.10"
+            className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+          />
+        </Field>
+        <Field label="Stop loss (optional)">
+          <input
+            type="number"
+            step="0.00001"
+            value={stopLoss}
+            onChange={(e) => setStopLoss(e.target.value)}
+            placeholder="1.04000"
+            className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+          />
+        </Field>
+        <Field label="Take profit (optional)">
+          <input
+            type="number"
+            step="0.00001"
+            value={takeProfit}
+            onChange={(e) => setTakeProfit(e.target.value)}
+            placeholder="1.07000"
+            className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+          />
+        </Field>
+      </div>
+
+      <Field label="Entry emotion">
+        <EmotionChips value={entryEmotion} onChange={setEntryEmotion} />
+      </Field>
+
+      <label className="mb-4 flex items-center gap-2 text-sm font-medium text-gray-700">
+        <input
+          type="checkbox"
+          checked={planFollowed}
+          onChange={(e) => setPlanFollowed(e.target.checked)}
+          className="h-4 w-4 accent-brand"
+        />
+        This trade follows my plan
+      </label>
+
+      <Field label="Notes (optional)">
+        <textarea
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          rows={2}
+          placeholder="Why are you taking this trade?"
+          className="w-full resize-none rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+        />
+      </Field>
+
+      <button
+        onClick={start}
+        className="mt-2 w-full rounded-lg bg-brand py-3 text-sm font-bold text-white transition hover:brightness-105"
+      >
+        Start Trade
+      </button>
+    </ModalShell>
+  );
+}
+
+// ---- Finish a trade (exit) -------------------------------------------------
+
+function FinishTradeModal({
+  trade,
+  onFinish,
+  onClose,
+}: {
+  trade: JournalTrade;
+  onFinish: (id: string, patch: Partial<JournalTrade>) => void;
+  onClose: () => void;
+}) {
+  const [exitPrice, setExitPrice] = useState("");
+  const [pnl, setPnl] = useState("");
+  const [rMultiple, setRMultiple] = useState("");
+  const [exitEmotion, setExitEmotion] = useState("");
+  const [note, setNote] = useState("");
+
+  const pnlValid = pnl.trim() !== "" && !Number.isNaN(Number(pnl));
+
+  const finish = () => {
+    if (!pnlValid) return;
+    const closingNote = note.trim();
+    onFinish(trade.id, {
+      exitPrice: numOrNull(exitPrice),
+      netPnl: Number(pnl),
+      rMultiple: rMultiple.trim() === "" ? 0 : Number(rMultiple),
+      exitEmotion: exitEmotion || null,
+      note: closingNote
+        ? [trade.note, closingNote].filter(Boolean).join("\n")
+        : trade.note,
+    });
+  };
+
+  return (
+    <ModalShell
+      title="Finish Trade"
+      subtitle={`Close out ${trade.symbol} · ${trade.direction} and log the result.`}
+      onClose={onClose}
+    >
+      <div className="mb-4 flex items-center gap-2 rounded-lg bg-gray-50 px-3 py-2 text-sm text-gray-600">
+        <span>{trade.flag}</span>
+        <span className="font-semibold text-gray-800">{trade.symbol}</span>
+        <span className={trade.direction === "Buy" ? "text-emerald-500" : "text-red-500"}>
+          {trade.direction === "Buy" ? "↑" : "↓"} {trade.direction}
+        </span>
+        {trade.entryEmotion && (
+          <span className="ml-auto text-xs text-gray-400">
+            Entry: <span className="font-medium text-gray-600">{trade.entryEmotion}</span>
+          </span>
+        )}
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Net PnL ($)">
+          <input
+            type="number"
+            step="0.01"
+            value={pnl}
+            onChange={(e) => setPnl(e.target.value)}
+            placeholder="e.g. -250 or 500"
+            className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+          />
+        </Field>
+        <Field label="R multiple (optional)">
+          <input
+            type="number"
+            step="0.1"
+            value={rMultiple}
+            onChange={(e) => setRMultiple(e.target.value)}
+            placeholder="e.g. 2 or -1"
+            className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+          />
+        </Field>
+      </div>
+
+      <Field label="Exit price (optional)">
+        <input
+          type="number"
+          step="0.00001"
+          value={exitPrice}
+          onChange={(e) => setExitPrice(e.target.value)}
+          placeholder="1.06000"
+          className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+        />
+      </Field>
+
+      <Field label="Exit emotion">
+        <EmotionChips value={exitEmotion} onChange={setExitEmotion} />
+      </Field>
+
+      <Field label="Closing note (optional)">
+        <textarea
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          rows={2}
+          placeholder="How did it play out?"
+          className="w-full resize-none rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+        />
+      </Field>
+
+      <button
+        disabled={!pnlValid}
+        onClick={finish}
+        className="mt-2 w-full rounded-lg bg-brand py-3 text-sm font-bold text-white transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        Finish Trade
+      </button>
+      {!pnlValid && (
+        <p className="mt-2 text-center text-xs text-gray-400">
+          Enter the trade&apos;s Net PnL to finish it.
+        </p>
+      )}
+    </ModalShell>
   );
 }
 
