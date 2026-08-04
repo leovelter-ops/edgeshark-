@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { Menu, PictureInPicture2, Maximize2 } from "lucide-react";
+import { Menu, PictureInPicture2, Maximize2, Minus } from "lucide-react";
 import Sidebar from "@/components/Sidebar";
 import { getTheme, THEME_EVENT, Theme } from "@/lib/theme";
 
@@ -17,6 +17,9 @@ function getDocPiP(): DocumentPiP | null {
   return (window as unknown as { documentPictureInPicture?: DocumentPiP })
     .documentPictureInPicture ?? null;
 }
+
+const BUBBLE = { width: 132, height: 132 };
+const WINDOW = { width: 480, height: 780 };
 
 // Clone the app's stylesheets into the PiP document so it renders styled.
 function copyStyles(target: Window) {
@@ -39,9 +42,9 @@ function copyStyles(target: Window) {
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [pip, setPip] = useState<Window | null>(null);
+  const [mode, setMode] = useState<"bubble" | "app">("bubble");
   const [unsupported, setUnsupported] = useState(false);
 
-  // Close the drawer on Escape.
   useEffect(() => {
     if (!drawerOpen) return;
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && setDrawerOpen(false);
@@ -60,6 +63,14 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener(THEME_EVENT, onTheme);
   }, [pip]);
 
+  const resize = (w: number, h: number) => {
+    try {
+      pip?.resizeTo(w, h);
+    } catch {
+      /* some builds block programmatic resize — the user can drag-resize */
+    }
+  };
+
   const openBubble = async () => {
     const dpip = getDocPiP();
     if (!dpip) {
@@ -67,26 +78,35 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       return;
     }
     try {
-      const w = await dpip.requestWindow({ width: 460, height: 760 });
+      const w = await dpip.requestWindow(BUBBLE);
       copyStyles(w);
       w.document.body.style.margin = "0";
+      w.document.body.style.overflow = "hidden";
       w.document.title = "VEX";
       w.addEventListener("pagehide", () => setPip(null), { once: true });
+      setMode("bubble");
       setPip(w);
     } catch {
       setUnsupported(true);
     }
   };
 
+  const expand = () => {
+    setMode("app");
+    resize(WINDOW.width, WINDOW.height);
+  };
+  const collapse = () => {
+    setMode("bubble");
+    resize(BUBBLE.width, BUBBLE.height);
+  };
+
   // The whole app. Rendered in place, or portaled into the floating window.
   const app = (
     <div className="flex h-screen w-full overflow-hidden">
-      {/* Desktop sidebar */}
       <div className="hidden md:flex">
         <Sidebar onMinimize={openBubble} />
       </div>
 
-      {/* Mobile drawer */}
       {drawerOpen && (
         <div
           className="fixed inset-0 z-40 bg-black/40 md:hidden"
@@ -102,7 +122,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         <Sidebar mobile onNavigate={() => setDrawerOpen(false)} />
       </div>
 
-      {/* Content column */}
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex items-center gap-3 border-b border-black/5 bg-white px-4 py-3 md:hidden">
           <button
@@ -121,12 +140,26 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     </div>
   );
 
-  // While popped out, render the app into the floating window and show a
-  // restore panel in the main tab.
   if (pip) {
     return (
       <>
-        {createPortal(app, pip.document.body)}
+        {createPortal(
+          mode === "bubble" ? (
+            <BubbleView onExpand={expand} />
+          ) : (
+            <div className="relative h-screen w-full">
+              {app}
+              <button
+                onClick={collapse}
+                title="Shrink to bubble"
+                className="fixed right-3 top-3 z-[80] flex h-8 w-8 items-center justify-center rounded-full bg-black/70 text-white shadow-lg hover:bg-black"
+              >
+                <Minus size={16} />
+              </button>
+            </div>
+          ),
+          pip.document.body,
+        )}
         <PoppedOutScreen onReopen={() => pip.close()} />
       </>
     );
@@ -140,6 +173,30 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   );
 }
 
+// The small always-on-top bubble. Click to expand into the full window.
+function BubbleView({ onExpand }: { onExpand: () => void }) {
+  return (
+    <div
+      className="flex h-screen w-screen items-center justify-center"
+      style={{ background: "transparent" }}
+    >
+      <button
+        onClick={onExpand}
+        title="Click to open VEX · drag the window to move"
+        className="flex h-24 w-24 items-center justify-center rounded-full bg-black shadow-2xl ring-2 ring-white/30 transition active:scale-95"
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/images/logo.jpg"
+          alt="Open VEX"
+          draggable={false}
+          className="h-14 w-14 rounded-full object-contain"
+        />
+      </button>
+    </div>
+  );
+}
+
 function PoppedOutScreen({ onReopen }: { onReopen: () => void }) {
   return (
     <div
@@ -150,7 +207,7 @@ function PoppedOutScreen({ onReopen }: { onReopen: () => void }) {
       <div>
         <p className="text-lg font-semibold text-gray-800">VEX is floating on top</p>
         <p className="mt-1 text-sm text-gray-400">
-          Drag the floating window anywhere — it stays above TradingView while you trade.
+          Drag the bubble anywhere — it stays above TradingView. Click it to open the app.
         </p>
       </div>
       <button
@@ -170,7 +227,7 @@ function UnsupportedDialog({ onClose }: { onClose: () => void }) {
         <PictureInPicture2 size={32} className="mx-auto text-gray-300" />
         <h3 className="mt-3 text-lg font-bold text-gray-900">Floating window unavailable</h3>
         <p className="mt-1 text-sm text-gray-500">
-          The always-on-top floating window uses the Document Picture-in-Picture
+          The always-on-top floating bubble uses the Document Picture-in-Picture
           API, available in the latest desktop Chrome or Edge. Open VEX there to
           float it over TradingView.
         </p>

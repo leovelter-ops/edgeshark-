@@ -105,7 +105,8 @@ function AccountTab() {
 
   const logout = async () => {
     await createClient().auth.signOut();
-    router.push("/login");
+    // Back to the landing — the full sign-in flow starts over from there.
+    router.push("/");
     router.refresh();
   };
   // Track edit mode in a ref so the settings-change listener (registered once)

@@ -48,7 +48,8 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  if (user && path === "/login") {
+  // Already signed in? Skip the landing + login entirely and go to the app.
+  if (user && (path === "/login" || path === "/")) {
     const url = request.nextUrl.clone();
     url.pathname = "/dashboard";
     return NextResponse.redirect(url);
